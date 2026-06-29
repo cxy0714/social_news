@@ -1,2 +1,6 @@
 # 本地抓取中间产物（candidate lists）
 digests/_raw-*.md
+
+# Python 虚拟环境
+.venv/
+venv/
