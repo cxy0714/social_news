@@ -1,6 +1,6 @@
-# 每日社会新闻摘要 · Daily Social News Digest
+# 每日新闻摘要 · Daily News Digest
 
-云端定时任务自动巡视全球主流报纸，筛选社会新闻、去重，生成中文摘要并附原文链接。运行说明见 [`instruction.md`](./instruction.md)。
+云端定时任务自动巡视全球主流报纸，覆盖**政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发**五大类，筛选去重，生成中文摘要并附原文链接。运行说明见 [`instruction.md`](./instruction.md)。
 
 ## 最近 7 天
 
