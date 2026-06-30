@@ -127,6 +127,8 @@ def main() -> int:
     ap.add_argument("--hours", type=int, default=24, help="保留过去 N 小时内的条目（默认 24）")
     today = dt.date.today().isoformat()
     ap.add_argument("--out", default=f"digests/_raw-{today}.md", help="输出文件路径")
+    ap.add_argument("--no-dedup", action="store_true",
+                    help="不按标题去重，保留所有条目（含跨源近似重复）")
     args = ap.parse_args()
 
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=args.hours)
@@ -151,9 +153,12 @@ def main() -> int:
             if when is not None and when < cutoff:
                 continue
             key = norm_title(it["title"])
-            if not key or key in seen:
+            if not key:
                 continue
-            seen.add(key)
+            if not args.no_dedup:
+                if key in seen:
+                    continue
+                seen.add(key)
             it["source"] = name
             by_region.setdefault(region, []).append(it)
             kept += 1
@@ -164,7 +169,8 @@ def main() -> int:
     # ── 写候选清单 ──────────────────────────────────────────────────────────
     lines: list[str] = []
     lines.append(f"# 新闻候选清单（原始）· {today}")
-    lines.append(f"> 本地 RSS 抓取，过去 {args.hours} 小时，去重后共 {total_kept} 条。")
+    _dedup_note = "未去重" if args.no_dedup else "去重后"
+    lines.append(f"> 本地 RSS 抓取，过去 {args.hours} 小时，{_dedup_note}共 {total_kept} 条。")
     lines.append("> 下一步：在 Claude Code 里让它读本文件，做分类(政治/经济/科技/社会/灾害)+中文摘要，写成正式 digest。")
     lines.append("")
     for region in ("北美", "欧洲", "亚太", "亚太/中东", "港澳台", "中国大陆", "其他"):
