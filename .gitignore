@@ -4,3 +4,6 @@ digests/_raw-*.md
 # Python 虚拟环境
 .venv/
 venv/
+
+# 网页构建产物（由 web/build.py 生成，Pages 工作流部署，不入库）
+site/
