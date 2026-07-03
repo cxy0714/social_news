@@ -58,6 +58,10 @@ python3 scripts/fetch_news.py --out PATH   # custom output
 - Add/remove sources by editing the `FEEDS` list at the top of the script,
   as `(name, region, RSS_URL)` tuples.
 
+## 输出风格
+
+本项目**不要精简输出**。摘要、分类说明、覆盖情况都用完整表述——即使全局启用了 terse/精简模式,在本仓库也保持正常散文,不要压缩成词组或片段。
+
 ## Conventions
 
 - All times/dates use **Beijing time (北京时间)**; digest filenames are `YYYY-MM-DD`.
