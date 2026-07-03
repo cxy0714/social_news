@@ -123,6 +123,13 @@ def norm_title(title: str) -> str:
 
 
 def main() -> int:
+    # Windows 控制台默认 GBK，会在打印 ✓/✅ 等字符时报 UnicodeEncodeError；改用 UTF-8。
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass  # 老版本 Python 或已被重定向的流，忽略即可
+
     ap = argparse.ArgumentParser(description="本地 RSS 新闻抓取 → 候选清单 markdown")
     ap.add_argument("--hours", type=int, default=24, help="保留过去 N 小时内的条目（默认 24）")
     today = dt.date.today().isoformat()
