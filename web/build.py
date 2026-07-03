@@ -158,7 +158,6 @@ NAV_ITEMS = [
     ("weekly", "每周 Weekly", None),    # -> newest weekly, filled at build
     ("changelog", "更新 Changelog", "changelog.html"),
     ("stats", "统计 Stats", "stats.html"),
-    ("achievements", "成就 Achievements", "achievements.html"),
 ]
 
 
@@ -238,30 +237,12 @@ def build_home(docs: list[Doc]) -> str:
         '<strong>📚 概念观察</strong> 栏目，从新闻抽取宏观经济学 &amp; 社会学概念配现实案例。</p>'
     )
 
-    info = streak_info(daily_dates(docs))
-
     # stat row
     p.append('<div class="stat-row">')
     p.append(f'<div class="stat"><b>{len(dailies)}</b><span>每日期数 Daily</span></div>')
-    p.append(f'<div class="stat"><b>{info["current"]}</b><span>连续天数 Streak</span></div>')
     p.append(f'<div class="stat"><b>{len(weeklies)}</b><span>每周综述 Weekly</span></div>')
     p.append(f'<div class="stat"><b>{total_items}</b><span>累计条目 Items</span></div>')
     p.append("</div>")
-
-    # highest badge earned
-    earned = [b for b in BADGES if info["longest"] >= b[0]]
-    if earned:
-        thr, emoji, zh, en, _blurb = earned[-1]
-        nxt = next((b for b in BADGES if b[0] > info["longest"]), None)
-        tail = ""
-        if nxt:
-            tail = f'，再连续 {nxt[0] - info["longest"]} 天解锁 {nxt[1]} {nxt[2]}'
-        p.append(
-            f'<a class="badge-teaser" href="achievements.html">'
-            f'<span class="bt-icon">{emoji}</span>'
-            f'<span class="bt-text">当前成就 <strong>{html.escape(zh)} · {html.escape(en)}</strong>'
-            f'（连续 {thr} 天{tail}）→</span></a>'
-        )
 
     if latest:
         p.append('<h2>最新一期 Latest</h2>')
@@ -379,99 +360,6 @@ def build_stats(docs: list[Doc]) -> str:
     return "\n".join(p)
 
 
-# --- achievements --------------------------------------------------------
-
-# (threshold_days, emoji, name_zh, name_en, blurb)
-BADGES = [
-    (1,   "🌱", "起步",   "First Step",  "发布第一期摘要"),
-    (3,   "🔥", "三连",   "Streak 3",    "连续 3 天不间断"),
-    (7,   "⭐", "一周",   "One Week",    "连续 7 天，一周不断更"),
-    (14,  "🌟", "两周",   "Two Weeks",   "连续 14 天，习惯初成"),
-    (30,  "🏅", "月度",   "One Month",   "连续 30 天，满月坚持"),
-    (50,  "💎", "半百",   "Fifty",       "连续 50 天，稳如磐石"),
-    (100, "👑", "百日",   "Century",     "连续 100 天，百日筑基"),
-    (200, "🚀", "二百",   "Two Hundred", "连续 200 天，一往无前"),
-    (365, "🏆", "周年",   "One Year",    "连续 365 天，全年无休"),
-]
-
-
-def daily_dates(docs: list[Doc]) -> list[dt.date]:
-    ds = sorted({d.date for d in docs if not d.is_weekly and not d.is_full and d.date})
-    return ds
-
-
-def streak_info(dates: list[dt.date]) -> dict:
-    """Longest and current consecutive-day streaks from a set of dates."""
-    if not dates:
-        return {"total": 0, "longest": 0, "current": 0, "first": None, "last": None}
-    longest = cur = 1
-    for prev, nxt in zip(dates, dates[1:]):
-        if (nxt - prev).days == 1:
-            cur += 1
-        else:
-            cur = 1
-        longest = max(longest, cur)
-    # current streak = run ending at the most recent date
-    current = 1
-    for prev, nxt in zip(reversed(dates[:-1]), reversed(dates)):
-        if (nxt - prev).days == 1:
-            current += 1
-        else:
-            break
-    return {
-        "total": len(dates), "longest": longest, "current": current,
-        "first": dates[0], "last": dates[-1],
-    }
-
-
-def build_achievements(docs: list[Doc]) -> str:
-    dates = daily_dates(docs)
-    info = streak_info(dates)
-    longest = info["longest"]
-
-    p = ['<h1>成就 Achievements</h1>']
-    p.append(
-        '<p class="muted">徽章按<strong>连续发布天数</strong>解锁，依据 '
-        '<code>digests/YYYY-MM-DD.md</code> 的日期自动计算（相邻日期算连续，断更则重新计数）。</p>'
-    )
-
-    # streak summary
-    p.append('<div class="stat-row">')
-    p.append(f'<div class="stat"><b>{info["longest"]}</b><span>最长连续 Longest</span></div>')
-    p.append(f'<div class="stat"><b>{info["current"]}</b><span>当前连续 Current</span></div>')
-    p.append(f'<div class="stat"><b>{info["total"]}</b><span>累计天数 Total</span></div>')
-    p.append("</div>")
-
-    unlocked = sum(1 for b in BADGES if longest >= b[0])
-    p.append(
-        f'<p class="muted">已解锁 <strong>{unlocked} / {len(BADGES)}</strong> 枚徽章'
-        + (f'，最长连续 {longest} 天。' if longest else '。')
-        + '</p>'
-    )
-
-    # badge grid
-    p.append('<div class="badge-grid">')
-    for thr, emoji, zh, en, blurb in BADGES:
-        got = longest >= thr
-        # progress toward the next locked badge
-        cls = "badge" if got else "badge locked"
-        state = "已解锁" if got else f"还差 {thr - longest} 天"
-        p.append(
-            f'<div class="{cls}">'
-            f'<div class="badge-icon">{emoji}</div>'
-            f'<div class="badge-name">{html.escape(zh)} · {html.escape(en)}</div>'
-            f'<div class="badge-req">连续 {thr} 天</div>'
-            f'<div class="badge-blurb">{html.escape(blurb)}</div>'
-            f'<div class="badge-state">{state}</div>'
-            f'</div>'
-        )
-    p.append("</div>")
-
-    if not dates:
-        p.append('<p class="muted">还没有每日摘要，发布第一期即可点亮 🌱。</p>')
-    return "\n".join(p)
-
-
 def build(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     docs = collect_docs()
@@ -517,7 +405,6 @@ def build(out_dir: Path) -> None:
         ("home", "首页 Home", "home.html", build_home(docs)),
         ("changelog", "更新日志 Changelog", "changelog.html", build_changelog()),
         ("stats", "统计 Stats", "stats.html", build_stats(docs)),
-        ("achievements", "成就 Achievements", "achievements.html", build_achievements(docs)),
     ]
     for page_id, title, fname, content in standalone:
         page = standalone_tpl.format(
