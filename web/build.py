@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Pre-compile digests/*.md into a static site under site/.
+"""Compile digests/*.md into ONE self-contained index.html under site/.
 
 The markdown files remain the single source of truth; this script only renders
-them. Run locally with `pip install markdown` or via the GitHub Pages workflow.
+them. The output is a single file with CSS/JS inlined and every digest embedded
+as a hidden <section> switched client-side via the URL hash — so it works from a
+plain file:// double-click, no server, offline. Bookmark the local file once and
+each rebuild just overwrites it in place.
 
 Usage:
-    python web/build.py                 # -> site/
+    python web/build.py                 # -> site/index.html
     python web/build.py --out PATH      # custom output dir
 """
 from __future__ import annotations
@@ -28,7 +31,6 @@ except ImportError:  # pragma: no cover - guidance for local runs
 ROOT = Path(__file__).resolve().parent.parent
 DIGESTS = ROOT / "digests"
 WEB = ROOT / "web"
-TEMPLATES = WEB / "templates"
 STATIC = WEB / "static"
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -66,8 +68,8 @@ class Doc:
             return None
 
     @property
-    def out_name(self) -> str:
-        return f"{self.slug}.html"
+    def view_id(self) -> str:
+        return self.slug
 
     def label(self) -> str:
         """Sidebar label."""
@@ -86,45 +88,49 @@ def collect_docs() -> list[Doc]:
     return docs
 
 
+# Cross-digest links in the markdown look like [text](./2026-07-01-full.md).
+# In the single-file site every digest is an in-page view, so rewrite those to
+# the matching #hash. The digest markdown stays untouched — this is render-only.
+_MD_LINK_RE = re.compile(r'href="\.?/?([^"/]+)\.md"')
+
+
 def render_md(md_text: str) -> str:
-    return markdown.markdown(
+    out = markdown.markdown(
         md_text,
         extensions=["extra", "sane_lists", "toc", "nl2br"],
         output_format="html5",
     )
+    return _MD_LINK_RE.sub(r'href="#\1"', out)
 
 
-def build_sidebar(docs: list[Doc], active: Doc) -> str:
-    """Two switchable panels — Daily and Weekly. The active doc's kind is shown."""
+# --- sidebar (date rail) -------------------------------------------------
+
+def build_sidebar(docs: list[Doc]) -> str:
+    """Two switchable panels — Daily and Weekly. Links are in-page hashes."""
     dailies = [d for d in docs if not d.is_weekly and not d.is_full]
     fulls = {d.slug.replace("-full", ""): d for d in docs if d.is_full}
     weeklies = [d for d in docs if d.is_weekly]
 
-    # newest first
     dailies.sort(key=lambda d: (d.date or dt.date.min), reverse=True)
     weeklies.sort(key=lambda d: (d.date or dt.date.min), reverse=True)
 
     def link(d: Doc, text: str | None = None) -> str:
-        cls = ' class="active"' if d.slug == active.slug else ""
-        return f'<a href="{d.out_name}"{cls}>{html.escape(text or d.label())}</a>'
+        return f'<a href="#{d.view_id}">{html.escape(text or d.label())}</a>'
 
-    active_kind = "weekly" if active.is_weekly else "daily"
-
-    def tab(kind: str, label: str, count: int) -> str:
-        cls = "tab active" if kind == active_kind else "tab"
+    def tab(kind: str, label: str, count: int, active: bool) -> str:
+        cls = "tab active" if active else "tab"
         return (
             f'<button class="{cls}" data-tab="{kind}">'
             f'{label} <span class="tab-count">{count}</span></button>'
         )
 
     parts: list[str] = ['<div class="nav-tabs">']
-    parts.append(tab("daily", "每日 Daily", len(dailies)))
-    parts.append(tab("weekly", "每周 Weekly", len(weeklies)))
+    parts.append(tab("daily", "每日 Daily", len(dailies), True))
+    parts.append(tab("weekly", "每周 Weekly", len(weeklies), False))
     parts.append("</div>")
 
     # Daily panel
-    show = "" if active_kind == "daily" else ' hidden'
-    parts.append(f'<div class="nav-panel" data-panel="daily"{show}><ul>')
+    parts.append('<div class="nav-panel" data-panel="daily"><ul>')
     for d in dailies:
         extra = ""
         full = fulls.get(d.slug)
@@ -133,9 +139,8 @@ def build_sidebar(docs: list[Doc], active: Doc) -> str:
         parts.append(f"<li>{link(d)}{extra}</li>")
     parts.append("</ul></div>")
 
-    # Weekly panel
-    show = "" if active_kind == "weekly" else ' hidden'
-    parts.append(f'<div class="nav-panel" data-panel="weekly"{show}><ul>')
+    # Weekly panel (hidden by default; JS reveals when a weekly is shown)
+    parts.append('<div class="nav-panel" data-panel="weekly" hidden><ul>')
     if weeklies:
         for d in weeklies:
             parts.append(f"<li>{link(d)}</li>")
@@ -146,32 +151,19 @@ def build_sidebar(docs: list[Doc], active: Doc) -> str:
     return "\n".join(parts)
 
 
-def load_template(name: str) -> str:
-    return (TEMPLATES / name).read_text(encoding="utf-8")
-
-
 # --- top navigation ------------------------------------------------------
 
-NAV_ITEMS = [
-    ("home", "首页 Home", "home.html"),
-    ("daily", "每日 Daily", None),      # -> newest daily, filled at build
-    ("weekly", "每周 Weekly", None),    # -> newest weekly, filled at build
-    ("changelog", "更新 Changelog", "changelog.html"),
-    ("stats", "统计 Stats", "stats.html"),
-]
-
-
-def build_topnav(active: str, daily_href: str, weekly_href: str) -> str:
+def build_topnav(daily_href: str, weekly_href: str) -> str:
+    items = [
+        ("home", "首页 Home", "#home"),
+        ("daily", "每日 Daily", daily_href),
+        ("weekly", "每周 Weekly", weekly_href),
+        ("changelog", "更新 Changelog", "#changelog"),
+        ("stats", "统计 Stats", "#stats"),
+    ]
     links = []
-    for key, label, href in NAV_ITEMS:
-        if key == "daily":
-            href = daily_href
-        elif key == "weekly":
-            href = weekly_href
-        if not href:
-            continue
-        cls = ' class="active"' if key == active else ""
-        links.append(f'<a href="{href}"{cls}>{html.escape(label)}</a>')
+    for key, label, href in items:
+        links.append(f'<a href="{href}" data-nav="{key}">{html.escape(label)}</a>')
     return "".join(links)
 
 
@@ -180,10 +172,8 @@ def build_topnav(active: str, daily_href: str, weekly_href: str) -> str:
 def digest_metrics(d: Doc) -> dict:
     """Count objective things build can actually see in a daily digest."""
     text = d.md
-    # bullet items = lines starting with "- **"
     items = len(re.findall(r"^- \*\*", text, re.MULTILINE))
     links = len(re.findall(r"\]\(https?://", text))
-    # candidate count often stated as "（NNN 条候选）"
     cand = None
     m = re.search(r"(\d+)\s*条候选", text)
     if m:
@@ -193,11 +183,7 @@ def digest_metrics(d: Doc) -> dict:
 
 
 def load_usage() -> dict[str, dict]:
-    """Optional token usage keyed by date, from stats/usage.jsonl if present.
-
-    Each line: {"date": "2026-07-03", "input_tokens": N, "output_tokens": N}
-    Absent file -> empty; the stats page then shows production metrics only.
-    """
+    """Optional token usage keyed by date, from stats/usage.jsonl if present."""
     f = ROOT / "stats" / "usage.jsonl"
     out: dict[str, dict] = {}
     if not f.exists():
@@ -215,7 +201,7 @@ def load_usage() -> dict[str, dict]:
     return out
 
 
-# --- standalone pages ----------------------------------------------------
+# --- standalone views ----------------------------------------------------
 
 def build_home(docs: list[Doc]) -> str:
     dailies = sorted(
@@ -237,7 +223,6 @@ def build_home(docs: list[Doc]) -> str:
         '<strong>📚 概念观察</strong> 栏目，从新闻抽取宏观经济学 &amp; 社会学概念配现实案例。</p>'
     )
 
-    # stat row
     p.append('<div class="stat-row">')
     p.append(f'<div class="stat"><b>{len(dailies)}</b><span>每日期数 Daily</span></div>')
     p.append(f'<div class="stat"><b>{len(weeklies)}</b><span>每周综述 Weekly</span></div>')
@@ -247,7 +232,7 @@ def build_home(docs: list[Doc]) -> str:
     if latest:
         p.append('<h2>最新一期 Latest</h2>')
         p.append(
-            f'<a class="card" href="{latest.out_name}">'
+            f'<a class="card" href="#{latest.view_id}">'
             f'<div class="card-date">{latest.date.isoformat() if latest.date else latest.slug}</div>'
             f'<div class="card-title">{html.escape(latest.title)}</div>'
             f'<div class="card-cta">阅读全文 →</div></a>'
@@ -257,11 +242,11 @@ def build_home(docs: list[Doc]) -> str:
         p.append('<h2>近期每日 Recent</h2><ul class="link-list">')
         for d in dailies[1:8]:
             date = d.date.isoformat() if d.date else d.slug
-            p.append(f'<li><a href="{d.out_name}"><span class="ll-date">{date}</span> {html.escape(d.title)}</a></li>')
+            p.append(f'<li><a href="#{d.view_id}"><span class="ll-date">{date}</span> {html.escape(d.title)}</a></li>')
         p.append("</ul>")
 
     p.append(
-        '<p class="muted">运行说明见 <a href="https://github.com/cxy0714/social_news">仓库</a> 的 '
+        '<p class="muted">运行说明见 <a href="https://github.com/cxy0714/social_news" target="_blank" rel="noopener">仓库</a> 的 '
         '<code>instruction.md</code>；各来源媒体的类型 / 立场 / 领域见 <code>sources.md</code>。</p>'
     )
     return "\n".join(p)
@@ -320,7 +305,6 @@ def build_stats(docs: list[Doc]) -> str:
         + "</p>"
     )
 
-    # totals
     tot_items = sum(digest_metrics(d)["items"] for d in dailies)
     tot_links = sum(digest_metrics(d)["links"] for d in dailies)
     tot_chars = sum(digest_metrics(d)["chars"] for d in dailies)
@@ -331,7 +315,6 @@ def build_stats(docs: list[Doc]) -> str:
     p.append(f'<div class="stat"><b>{tot_chars // 1000}k</b><span>产出字数 Chars</span></div>')
     p.append("</div>")
 
-    # per-day table
     p.append('<h2>逐期明细 Per-issue</h2>')
     p.append('<div class="table-wrap"><table class="stats-table"><thead><tr>'
              '<th>日期 Date</th><th>候选 Cand.</th><th>条目 Items</th>'
@@ -343,7 +326,7 @@ def build_stats(docs: list[Doc]) -> str:
         m = digest_metrics(d)
         date = d.date.isoformat() if d.date else d.slug
         row = [
-            f'<td><a href="{d.out_name}">{date}</a></td>',
+            f'<td><a href="#{d.view_id}">{date}</a></td>',
             f'<td>{m["candidates"] if m["candidates"] is not None else "—"}</td>',
             f'<td>{m["items"]}</td>',
             f'<td>{m["links"]}</td>',
@@ -360,22 +343,86 @@ def build_stats(docs: list[Doc]) -> str:
     return "\n".join(p)
 
 
+# --- page assembly -------------------------------------------------------
+
+HEAD_TMPL = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>每日新闻摘要 · Daily News Digest</title>
+<meta name="description" content="每日新闻摘要 Daily News Digest — 政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。原创中文摘要 + 原文链接。">
+<style>
+{css}
+</style>
+</head>
+<body>
+<script>
+// apply theme before paint to avoid flash
+(function(){{try{{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t;}}catch(e){{}}}})();
+</script>
+<header class="topbar">
+  <button id="nav-toggle" class="icon-btn" aria-label="Toggle navigation">☰</button>
+  <a class="brand" href="#home">
+    <span class="brand-zh">每日新闻摘要</span>
+    <span class="brand-en">Daily News Digest</span>
+  </a>
+  <nav class="topnav">{topnav}</nav>
+  <button id="theme-toggle" class="icon-btn" aria-label="Toggle theme">◐</button>
+</header>
+<div class="layout">
+  <aside id="sidebar" class="sidebar">
+    <nav>
+{sidebar}
+    </nav>
+    <div class="sidebar-foot">
+      <a href="https://github.com/cxy0714/social_news" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </aside>
+  <main class="reader">
+"""
+
+FOOT_TMPL = """  </main>
+</div>
+<div id="scrim" class="scrim"></div>
+<script>
+{js}
+</script>
+</body>
+</html>
+"""
+
+
+def digest_section(d: Doc, is_default: bool) -> str:
+    default_attr = " data-default" if is_default else ""
+    kind = "weekly" if d.is_weekly else "daily"
+    return (
+        f'<section class="view-digest" data-view="{d.view_id}" data-kind="{kind}" '
+        f'data-title="{html.escape(d.title)}"{default_attr} hidden>\n'
+        f'<article class="prose">\n{render_md(d.md)}\n</article>\n'
+        f'<footer class="page-foot">\n'
+        f'所有摘要均为原创概述并附原文链接，遵守版权红线（不复制原文、不绕过付费墙）。'
+        f'来源如实标注，不做立场加工。\n</footer>\n</section>'
+    )
+
+
+def standalone_section(view_id: str, title: str, body: str, is_default: bool = False) -> str:
+    default_attr = " data-default" if is_default else ""
+    return (
+        f'<section class="view-standalone" data-view="{view_id}" data-kind="standalone" '
+        f'data-nav="{view_id}" data-title="{html.escape(title)}"{default_attr} hidden>\n'
+        f'<div class="page-inner">\n{body}\n</div>\n</section>'
+    )
+
+
 def build(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     docs = collect_docs()
     if not docs:
         raise SystemExit("No digests found under digests/*.md")
 
-    page_tpl = load_template("page.html")
-    standalone_tpl = load_template("standalone.html")
-
-    # copy static assets
-    assets_out = out_dir / "static"
-    assets_out.mkdir(exist_ok=True)
-    for asset in STATIC.glob("*"):
-        (assets_out / asset.name).write_text(
-            asset.read_text(encoding="utf-8"), encoding="utf-8"
-        )
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
 
     dailies = sorted(
         [d for d in docs if not d.is_weekly and not d.is_full],
@@ -385,42 +432,31 @@ def build(out_dir: Path) -> None:
         [d for d in docs if d.is_weekly],
         key=lambda d: (d.date or dt.date.min), reverse=True,
     )
-    daily_href = (dailies[0] if dailies else docs[0]).out_name
-    weekly_href = weeklies[0].out_name if weeklies else "home.html"
+    daily_href = f"#{(dailies[0] if dailies else docs[0]).view_id}"
+    weekly_href = f"#{weeklies[0].view_id}" if weeklies else "#home"
 
-    # digest pages (with date sidebar)
-    for d in docs:
-        active = "weekly" if d.is_weekly else "daily"
-        page = page_tpl.format(
-            title=html.escape(d.title),
-            slug=d.slug,
-            topnav=build_topnav(active, daily_href, weekly_href),
-            sidebar=build_sidebar(docs, d),
-            content=render_md(d.md),
+    parts: list[str] = [
+        HEAD_TMPL.format(
+            css=css,
+            topnav=build_topnav(daily_href, weekly_href),
+            sidebar=build_sidebar(docs),
         )
-        (out_dir / d.out_name).write_text(page, encoding="utf-8")
-
-    # standalone pages
-    standalone = [
-        ("home", "首页 Home", "home.html", build_home(docs)),
-        ("changelog", "更新日志 Changelog", "changelog.html", build_changelog()),
-        ("stats", "统计 Stats", "stats.html", build_stats(docs)),
     ]
-    for page_id, title, fname, content in standalone:
-        page = standalone_tpl.format(
-            title=html.escape(title),
-            page_id=page_id,
-            topnav=build_topnav(page_id, daily_href, weekly_href),
-            content=content,
-        )
-        (out_dir / fname).write_text(page, encoding="utf-8")
 
-    # index.html -> home page
-    home_html = (out_dir / "home.html").read_text(encoding="utf-8")
-    (out_dir / "index.html").write_text(home_html, encoding="utf-8")
+    # home is the default landing view when there is no hash
+    parts.append(standalone_section("home", "首页 Home", build_home(docs), is_default=True))
+    for d in docs:
+        parts.append(digest_section(d, is_default=False))
+    parts.append(standalone_section("changelog", "更新日志 Changelog", build_changelog()))
+    parts.append(standalone_section("stats", "统计 Stats", build_stats(docs)))
 
+    parts.append(FOOT_TMPL.format(js=js))
+    doc_html = "\n".join(parts)
+
+    (out_dir / "index.html").write_text(doc_html, encoding="utf-8")
     print(
-        f"Built {len(docs)} digest pages + {len(standalone)} standalone -> {out_dir}"
+        f"Built single-file site: {len(docs)} digests + 3 pages -> "
+        f"{out_dir / 'index.html'}"
     )
 
 

@@ -5,5 +5,5 @@ digests/_raw-*.md
 .venv/
 venv/
 
-# 网页构建产物（由 web/build.py 生成，Pages 工作流部署，不入库）
+# 网页构建产物（由 web/build.py 生成的单文件 site/index.html，本地查看，不入库）
 site/

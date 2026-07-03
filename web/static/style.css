@@ -39,6 +39,11 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+
+/* Single-file view switching: only the active [data-view] is shown. */
+[data-view][hidden] { display: none !important; }
+/* Standalone views (home/changelog/stats) span full width — hide the date rail. */
+.layout.standalone-active > .sidebar { display: none; }
 body {
   background: var(--bg);
   color: var(--fg);

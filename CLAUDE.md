@@ -66,17 +66,19 @@ python3 scripts/fetch_news.py --out PATH   # custom output
 
 - All times/dates use **Beijing time (北京时间)**; digest filenames are `YYYY-MM-DD`.
 - **Digest files themselves stay pure markdown — no HTML inside `digests/`.** The
-  web layer under `web/` renders those markdown files into a static site
-  (`site/`, gitignored) and GitHub Pages serves it. Markdown remains the single
-  source of truth; the cloud task still only writes markdown and never runs the
-  web build. See `web/README.md`.
+  web layer under `web/` renders those markdown files into a single self-contained
+  `site/index.html` (gitignored) that the user opens/bookmarks locally via
+  `file://` — the repo is private, so there is no GitHub Pages deploy. Markdown
+  remains the single source of truth; the cloud task still only writes markdown
+  and never runs the web build. See `web/README.md`.
 - Cloud runs may be limited to `claude/`-prefixed branches unless the repo has
   "Allow unrestricted branch pushes" enabled (see `instruction.md` §0).
 
 ## 网页层（web/）
 
 - `digests/*.md` 是唯一事实来源；`web/build.py` 只做渲染，**不消耗 token**、不改动
-  digest。云端定时任务无需运行它——`.github/workflows/pages.yml` 在 push 时自动
-  构建部署。改站点样式/结构只动 `web/`，绝不为了网页去改 digest markdown 格式。
+  digest。它把所有 digest、CSS、JS 内联进单个 `site/index.html`，用户本地浏览器
+  打开/收藏即可（私有仓库，无 GitHub Pages）。云端定时任务无需运行它。改站点
+  样式/结构只动 `web/`，绝不为了网页去改 digest markdown 格式。
 - 统计页的 token 用量来自可选的 `stats/usage.jsonl`（见 `stats/README.md`）；产量
   指标由构建脚本直接从 digest 统计。
