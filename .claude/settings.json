@@ -4,5 +4,19 @@
       "Bash(python3 scripts/fetch_news.py)",
       "Bash(python scripts/fetch_news.py)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python web/build.py",
+            "statusMessage": "Building website..."
+          }
+        ]
+      }
+    ]
   }
 }
