@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIGESTS = ROOT / "digests"
 WEB = ROOT / "web"
 STATIC = WEB / "static"
+SOURCES = ROOT / "sources.md"
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
@@ -158,6 +159,7 @@ def build_topnav(daily_href: str, weekly_href: str) -> str:
         ("home", "首页 Home", "#home"),
         ("daily", "每日 Daily", daily_href),
         ("weekly", "每周 Weekly", weekly_href),
+        ("sources", "来源 Sources", "#sources"),
         ("changelog", "更新 Changelog", "#changelog"),
         ("stats", "统计 Stats", "#stats"),
     ]
@@ -286,6 +288,14 @@ def build_changelog() -> str:
             p.append(f"<li>{html.escape(subj)}</li>")
         p.append("</ul></div>")
     return "\n".join(p)
+
+
+def build_sources() -> str:
+    """Render sources.md as a standalone page."""
+    if not SOURCES.exists():
+        return '<h1>来源媒体介绍 · Sources Guide</h1><p class="muted">sources.md 文件未找到。</p>'
+    raw = SOURCES.read_text(encoding="utf-8")
+    return render_md(raw)
 
 
 def build_stats(docs: list[Doc]) -> str:
@@ -447,6 +457,7 @@ def build(out_dir: Path) -> None:
     parts.append(standalone_section("home", "首页 Home", build_home(docs), is_default=True))
     for d in docs:
         parts.append(digest_section(d, is_default=False))
+    parts.append(standalone_section("sources", "来源媒体介绍 Sources Guide", build_sources()))
     parts.append(standalone_section("changelog", "更新日志 Changelog", build_changelog()))
     parts.append(standalone_section("stats", "统计 Stats", build_stats(docs)))
 
@@ -455,7 +466,7 @@ def build(out_dir: Path) -> None:
 
     (out_dir / "index.html").write_text(doc_html, encoding="utf-8")
     print(
-        f"Built single-file site: {len(docs)} digests + 3 pages -> "
+        f"Built single-file site: {len(docs)} digests + 4 pages -> "
         f"{out_dir / 'index.html'}"
     )
 
