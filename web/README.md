@@ -17,10 +17,20 @@ hash（`#2026-07-03`、`#stats` 等）客户端切换，只显示当前一个：
 |------|------|
 | `#home`（默认） | 首页：项目介绍 + 最新一期卡片 + 统计概览 |
 | `#2026-07-03` 等 | 每篇 digest 一个视图，带日期侧栏（每日 / 每周两个 tab） |
+| `#future` | 未来技术：待调研 watchlist（读自 Gist）+ 调研报告卡片 |
+| `#ft-2026-07-09-vertical-farming` 等 | 每篇未来技术调研报告一个视图 |
 | `#changelog` | 更新日志，从 git 提交历史自动生成 |
 | `#stats` | 统计：逐期产量（条目/链接/字数/候选），可选 token 用量 |
 
-顶部导航：首页 / 每日 / 每周 / 更新 / 统计。digest 之间在 markdown 里的相对链接
+顶部导航：首页 / 每日 / 每周 / 未来技术 / 来源 / 更新 / 统计。
+
+## 未来技术层与收藏（Gist）
+
+- `#future` 视图渲染 `future-tech/*.md` 报告为卡片；每篇报告另有独立视图。
+- 每条新闻条目旁有 **☆ 收藏按钮**（`app.js` 运行时注入），点击把该条写入你的一个
+  **私密 GitHub Gist**（`watchlist.json`）。Gist ID 与 token 存在浏览器 localStorage，
+  **绝不入库**；在 `#future` 页点「⚙ 设置 Gist」配置。读 Gist 免 token，写需 `gist`
+  权限的 token。纯 `file://` 可用（GitHub API 支持跨域）。详见 `future-tech/README.md`。digest 之间在 markdown 里的相对链接
 （如 `[..](./2026-07-01-full.md)`）由构建脚本在渲染时改写成对应的 `#hash`，页内
 跳转直接生效——digest markdown 本身不改。
 

@@ -250,6 +250,93 @@ body {
 .stats-table th { color: var(--fg-soft); font-weight: 600; font-size: 12px; }
 .stats-table tbody tr:hover { background: var(--bg-soft); }
 
+/* Future-tech: bookmark buttons */
+.bm-btn {
+  border: none; background: none; cursor: pointer; color: var(--fg-soft);
+  font-size: 15px; line-height: 1; padding: 0 4px; margin-left: 4px;
+  vertical-align: baseline; opacity: .55; transition: opacity .15s, color .15s;
+}
+.bm-btn:hover { opacity: 1; color: var(--accent); }
+.bm-btn.on { opacity: 1; color: var(--accent); }
+.bm-btn.err { color: var(--accent); opacity: 1; }
+
+/* Watchlist widget */
+.wl {
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-soft); padding: 16px 18px; margin: 18px 0 8px;
+}
+.wl-head { display: flex; align-items: center; gap: 10px; }
+.wl-head h2 { margin: 0; font-size: 17px; border: none; padding: 0; }
+.wl-actions { margin-left: auto; display: flex; gap: 6px; }
+.btn-sm {
+  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  border-radius: 7px; padding: 5px 10px; font-size: 13px; cursor: pointer;
+  font-family: inherit;
+}
+.btn-sm:hover { border-color: var(--link); color: var(--link); }
+.btn-primary { background: var(--link); color: #fff; border-color: var(--link); }
+.btn-primary:hover { background: var(--link-hover); color: #fff; }
+.wl-list { margin-top: 12px; }
+.wl-items { list-style: none; padding: 0; margin: 0; }
+.wl-items li {
+  display: flex; align-items: center; gap: 8px; padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.wl-items li:last-child { border-bottom: none; }
+.wl-items a { color: var(--link); text-decoration: none; flex: 1 1 auto; min-width: 0; }
+.wl-items a:hover { text-decoration: underline; }
+.wl-date { color: var(--fg-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.wl-rm {
+  border: none; background: none; color: var(--fg-soft); cursor: pointer;
+  font-size: 13px; padding: 2px 6px; border-radius: 5px; flex: 0 0 auto;
+}
+.wl-rm:hover { color: var(--accent); background: var(--bg); }
+
+/* Future-tech report cards */
+.ft-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin: 12px 0; }
+.ft-card {
+  display: block; border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; background: var(--bg-soft); text-decoration: none !important;
+  transition: border-color .15s;
+}
+.ft-card:hover { border-color: var(--link); }
+.ft-card .card-title { font-size: 16px; margin: 4px 0 8px; }
+.ft-card-sum { font-size: 13px; color: var(--fg-soft); line-height: 1.6; margin-bottom: 10px; }
+
+/* Modal */
+.modal {
+  position: fixed; inset: 0; z-index: 50; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,.5); padding: 20px;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 24px; width: 100%; max-width: 460px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.3);
+}
+.modal-card h3 { margin: 0 0 8px; font-size: 18px; }
+.modal-card label { display: block; font-size: 13px; color: var(--fg-soft); margin: 12px 0 0; }
+.modal-card input {
+  width: 100%; margin-top: 5px; padding: 8px 10px; font-size: 14px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-soft); color: var(--fg); font-family: inherit;
+}
+.modal-hint { font-size: 12px; margin: 12px 0 0; }
+.modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.modal-spacer { flex: 1 1 auto; }
+.modal-msg { font-size: 13px; margin: 10px 0 0; }
+.modal-msg.warn { color: var(--accent); }
+
+/* Toast */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(12px);
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px;
+  font-size: 14px; z-index: 60; opacity: 0; transition: opacity .3s, transform .3s;
+  max-width: 90vw; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 /* Mobile */
 @media (max-width: 820px) {
   #nav-toggle { display: inline-flex; }

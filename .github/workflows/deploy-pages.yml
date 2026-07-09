@@ -1,0 +1,53 @@
+name: Deploy site to GitHub Pages
+
+# 每次 digest / 报告 / 网页层变动推到 main 时，用 web/build.py 现构一个
+# 单文件 site/index.html 并发布到 Pages。site/ 仍 gitignore，不入库。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "digests/**"
+      - "future-tech/**"
+      - "web/**"
+      - "sources.md"
+      - "README.md"
+      - "stats/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时刻只发布一份，新推送取消进行中的旧构建
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # build.py 读完整 git log 生成更新日志
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install markdown
+      - run: python web/build.py --out site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

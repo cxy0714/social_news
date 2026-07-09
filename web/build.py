@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - guidance for local runs
 
 ROOT = Path(__file__).resolve().parent.parent
 DIGESTS = ROOT / "digests"
+FUTURE = ROOT / "future-tech"
 WEB = ROOT / "web"
 STATIC = WEB / "static"
 SOURCES = ROOT / "sources.md"
@@ -87,6 +88,44 @@ def collect_docs() -> list[Doc]:
             continue
         docs.append(Doc(p))
     return docs
+
+
+class Report:
+    """One future-tech deep-dive report under future-tech/."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.slug = "ft-" + path.stem  # view id, namespaced to avoid clashes
+        raw = path.read_text(encoding="utf-8")
+        self.title = Doc._first_heading(raw) or path.stem
+        self.date = Doc._parse_date(path.stem)
+        self.md = raw
+
+    @property
+    def view_id(self) -> str:
+        return self.slug
+
+    def summary(self) -> str:
+        """First non-empty prose line after the front-matter blockquotes."""
+        for line in self.md.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or s.startswith(">") or s.startswith("-"):
+                continue
+            if s.startswith("**") or s.startswith("_"):
+                continue
+            return re.sub(r"[*`]", "", s)[:90]
+        return ""
+
+
+def collect_reports() -> list[Report]:
+    reports: list[Report] = []
+    if FUTURE.exists():
+        for p in sorted(FUTURE.glob("*.md")):
+            if p.stem.upper() == "README":
+                continue
+            reports.append(Report(p))
+    reports.sort(key=lambda r: (r.date or dt.date.min), reverse=True)
+    return reports
 
 
 # Cross-digest links in the markdown look like [text](./2026-07-01-full.md).
@@ -159,6 +198,7 @@ def build_topnav(daily_href: str, weekly_href: str) -> str:
         ("home", "首页 Home", "#home"),
         ("daily", "每日 Daily", daily_href),
         ("weekly", "每周 Weekly", weekly_href),
+        ("future", "未来技术 Future", "#future"),
         ("sources", "来源 Sources", "#sources"),
         ("changelog", "更新 Changelog", "#changelog"),
         ("stats", "统计 Stats", "#stats"),
@@ -298,6 +338,64 @@ def build_sources() -> str:
     return render_md(raw)
 
 
+def build_future(reports: list[Report]) -> str:
+    """Landing page for the future-tech layer: watchlist widget + report cards."""
+    p = ['<h1>未来技术 · Future Tech</h1>']
+    p.append(
+        '<p class="lede">从每日新闻里<strong>收藏</strong>一条值得深挖的（多为科技/'
+        '未来技术类），以它为起点写一篇<strong>结构化深度调研报告</strong>。收藏清单存在'
+        '你的私密 GitHub Gist，报告作为 markdown 归档进仓库。</p>'
+    )
+
+    # Watchlist widget — JS fills it from the configured Gist at runtime.
+    p.append('<div class="wl">')
+    p.append('<div class="wl-head">'
+             '<h2>📌 待调研 Watchlist</h2>'
+             '<div class="wl-actions">'
+             '<button id="wl-refresh" class="btn-sm" type="button">刷新</button>'
+             '<button id="wl-settings" class="btn-sm" type="button">⚙ 设置 Gist</button>'
+             '</div></div>')
+    p.append('<div id="wl-list" class="wl-list">'
+             '<p class="muted" id="wl-empty">未配置 Gist。点“⚙ 设置 Gist”填入 Gist ID 与 '
+             'token，即可在任意新闻条目旁用 ☆ 收藏，这里会列出待调研项。</p></div>')
+    p.append('</div>')
+
+    # Report cards
+    p.append('<h2>调研报告 Reports</h2>')
+    if reports:
+        p.append('<div class="ft-cards">')
+        for r in reports:
+            date = r.date.isoformat() if r.date else r.slug
+            summ = html.escape(r.summary())
+            p.append(
+                f'<a class="ft-card" href="#{r.view_id}">'
+                f'<div class="card-date">{date}</div>'
+                f'<div class="card-title">{html.escape(r.title)}</div>'
+                f'<div class="ft-card-sum">{summ}</div>'
+                f'<div class="card-cta">阅读报告 →</div></a>'
+            )
+        p.append('</div>')
+    else:
+        p.append('<p class="muted">暂无报告。收藏一条新闻后对我说“从这条写一篇未来技术调研”。</p>')
+
+    p.append(
+        '<p class="muted">这一层的说明见仓库 <code>future-tech/README.md</code>；'
+        '收藏机制与版权红线同 <code>instruction.md</code>。</p>'
+    )
+    return "\n".join(p)
+
+
+def report_section(r: Report) -> str:
+    return (
+        f'<section class="view-digest" data-view="{r.view_id}" data-kind="future" '
+        f'data-nav="future" data-title="{html.escape(r.title)}" hidden>\n'
+        f'<article class="prose">\n{render_md(r.md)}\n</article>\n'
+        f'<footer class="page-foot">\n'
+        f'本报告为原创综述并附来源链接，遵守版权红线（不复制原文、不绕过付费墙）。'
+        f'分析性观点基于公开资料，非投资建议。\n</footer>\n</section>'
+    )
+
+
 def build_stats(docs: list[Doc]) -> str:
     dailies = sorted(
         [d for d in docs if not d.is_weekly and not d.is_full],
@@ -395,6 +493,25 @@ HEAD_TMPL = """<!DOCTYPE html>
 FOOT_TMPL = """  </main>
 </div>
 <div id="scrim" class="scrim"></div>
+<div id="gist-modal" class="modal" hidden>
+  <div class="modal-card">
+    <h3>收藏设置 · GitHub Gist</h3>
+    <p class="muted">收藏清单存在你的一个私密 Gist。ID 与 token 仅存于本浏览器
+    (localStorage)，<strong>不会进仓库</strong>。token 需 <code>gist</code> 权限。</p>
+    <label>Gist ID<input id="gist-id" type="text" placeholder="如 a1b2c3d4..." autocomplete="off"></label>
+    <label>Token (仅 gist 权限)<input id="gist-token" type="password" placeholder="ghp_... / github_pat_..." autocomplete="off"></label>
+    <p class="muted modal-hint">还没有？到 <a href="https://gist.github.com" target="_blank" rel="noopener">gist.github.com</a>
+    新建一个私密 Gist（文件名 <code>watchlist.json</code>，内容 <code>[]</code>），URL 末段即 ID；
+    token 在 <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Settings → Tokens</a> 生成。</p>
+    <div class="modal-actions">
+      <button id="gist-clear" class="btn-sm" type="button">清除</button>
+      <span class="modal-spacer"></span>
+      <button id="gist-cancel" class="btn-sm" type="button">取消</button>
+      <button id="gist-save" class="btn-sm btn-primary" type="button">保存</button>
+    </div>
+    <p id="gist-msg" class="modal-msg" hidden></p>
+  </div>
+</div>
 <script>
 {js}
 </script>
@@ -430,6 +547,7 @@ def build(out_dir: Path) -> None:
     docs = collect_docs()
     if not docs:
         raise SystemExit("No digests found under digests/*.md")
+    reports = collect_reports()
 
     css = (STATIC / "style.css").read_text(encoding="utf-8")
     js = (STATIC / "app.js").read_text(encoding="utf-8")
@@ -457,6 +575,9 @@ def build(out_dir: Path) -> None:
     parts.append(standalone_section("home", "首页 Home", build_home(docs), is_default=True))
     for d in docs:
         parts.append(digest_section(d, is_default=False))
+    parts.append(standalone_section("future", "未来技术 Future Tech", build_future(reports)))
+    for r in reports:
+        parts.append(report_section(r))
     parts.append(standalone_section("sources", "来源媒体介绍 Sources Guide", build_sources()))
     parts.append(standalone_section("changelog", "更新日志 Changelog", build_changelog()))
     parts.append(standalone_section("stats", "统计 Stats", build_stats(docs)))
@@ -466,8 +587,8 @@ def build(out_dir: Path) -> None:
 
     (out_dir / "index.html").write_text(doc_html, encoding="utf-8")
     print(
-        f"Built single-file site: {len(docs)} digests + 4 pages -> "
-        f"{out_dir / 'index.html'}"
+        f"Built single-file site: {len(docs)} digests + {len(reports)} reports "
+        f"+ 5 pages -> {out_dir / 'index.html'}"
     )
 
 

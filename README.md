@@ -4,6 +4,12 @@
 
 > 🌐 **网页阅读**：本仓库私有，不走 GitHub Pages。跑 `python web/build.py` 会生成一个自包含的 `site/index.html`（所有内容内联），用浏览器打开并收藏这个本地文件即可离线阅读——带每日 / 每周分栏导航、更新日志、统计页与明暗主题。见 [`web/README.md`](./web/README.md)。
 
+> 🔭 **未来技术调研**：从新闻里收藏一条值得深挖的，以它为起点写结构化深度调研报告，归档在 [`future-tech/`](./future-tech/)。收藏清单存在私密 GitHub Gist（不入库），报告是入库的 markdown。见 [`future-tech/README.md`](./future-tech/README.md)。
+
+## 未来技术
+
+- [全密闭垂直农业 · Fully-Sealed Vertical Farming](./future-tech/2026-07-09-vertical-farming.md)（2026-07-09）
+
 ## 每周综述
 
 - [2026 第 27 周（6-23 → 6-30）](./digests/weekly-2026-06-30.md)

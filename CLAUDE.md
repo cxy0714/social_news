@@ -62,6 +62,21 @@ python3 scripts/fetch_news.py --out PATH   # custom output
 
 本项目**不要精简输出**。摘要、分类说明、覆盖情况都用完整表述——即使全局启用了 terse/精简模式,在本仓库也保持正常散文,不要压缩成词组或片段。
 
+## 未来技术调研层（future-tech/）
+
+一个独立于每日 digest 的产出：从新闻里**收藏**一条值得深挖的（多为科技类），以它
+为起点写一篇**结构化深度调研报告**，归档进 `future-tech/YYYY-MM-DD-<slug>.md`。
+
+- **报告**是入库的 markdown，格式见 `future-tech/README.md`（七段式：核心结论 / 技术
+  原理 / 关键玩家 / 现状进展 / 挑战争议 / 未来时间线 / 延伸阅读）。版权红线同 §2：
+  只写原创综述 + 必附来源链接，不复制原文、不绕过付费墙。
+- **待调研 watchlist** 不入库——存在用户的私密 GitHub Gist（`watchlist.json`）。站点
+  里每条新闻旁的 ☆ 按钮通过 GitHub API 读写该 Gist；Gist ID/token 仅存浏览器
+  localStorage。`web/build.py` 渲染 `#future` 落地页与各报告视图，watchlist 由 `app.js`
+  运行时从 Gist 拉取，构建脚本不碰 Gist、不消耗 token。
+- 云端定时任务不涉及这一层；报告由用户在交互会话里请求生成（"从这条写一篇未来技术
+  调研"）。
+
 ## Conventions
 
 - All times/dates use **Beijing time (北京时间)**; digest filenames are `YYYY-MM-DD`.
