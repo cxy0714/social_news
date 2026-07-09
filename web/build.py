@@ -279,16 +279,42 @@ def build_home(docs: list[Doc]) -> str:
 
     p = ['<h1>每日新闻摘要 · Daily News Digest</h1>']
     p.append(
-        '<p class="lede">云端定时任务自动巡视全球主流报纸，覆盖'
+        '<p class="lede">巡视全球主流报纸，覆盖'
         '<strong>政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发</strong>'
-        '五大类，去重后生成中文原创摘要并附原文链接。每期另附 '
-        '<strong>📚 概念观察</strong> 栏目，从新闻抽取宏观经济学 &amp; 社会学概念配现实案例。</p>'
+        '五大类，筛选去重后生成中文原创摘要并附原文链接。下面是各栏目导览。</p>'
     )
 
     p.append('<div class="stat-row">')
     p.append(f'<div class="stat"><b>{len(dailies)}</b><span>每日期数 Daily</span></div>')
     p.append(f'<div class="stat"><b>{len(weeklies)}</b><span>每周综述 Weekly</span></div>')
     p.append(f'<div class="stat"><b>{total_items}</b><span>累计条目 Items</span></div>')
+    p.append("</div>")
+
+    # 栏目导览
+    sections = [
+        ("#daily", "🗞 每日 Daily",
+         "每天一期，五大类高价值新闻的中文原创摘要，附原文链接。另设 "
+         "📚 概念观察，从新闻抽取宏观经济学 &amp; 社会学概念配现实案例。"),
+        ("#weekly", "📅 每周 Weekly",
+         "把一周的关键脉络收拢成一篇综述，看趋势而非单条事件。"),
+        ("#future", "🔭 未来技术 Future",
+         "从新闻里收藏一条值得深挖的（多为科技类），写成七段式结构化深度调研报告。"),
+        ("#sources", "📚 来源 Sources",
+         "所有取材媒体的类型 / 政治立场 / 专业领域一览，来源如实标注、不做立场加工。"),
+        ("#changelog", "🧾 更新日志 Changelog",
+         "管线、网页层与调研层的演进记录，按 Keep a Changelog 规范维护。"),
+        ("#stats", "📊 统计 Stats",
+         "产量与用量指标：期数、累计条目等由构建脚本直接从 digest 统计。"),
+    ]
+    p.append('<h2>栏目导览 Sections</h2>')
+    p.append('<div class="ft-cards">')
+    for href, title, desc in sections:
+        p.append(
+            f'<a class="ft-card" href="{href}">'
+            f'<div class="card-title">{title}</div>'
+            f'<div class="ft-card-sum">{desc}</div>'
+            f'<div class="card-cta">进入 →</div></a>'
+        )
     p.append("</div>")
 
     if latest:
@@ -308,8 +334,14 @@ def build_home(docs: list[Doc]) -> str:
         p.append("</ul>")
 
     p.append(
-        '<p class="muted">运行说明见 <a href="https://github.com/cxy0714/social_news" target="_blank" rel="noopener">仓库</a> 的 '
-        '<code>instruction.md</code>；各来源媒体的类型 / 立场 / 领域见 <code>sources.md</code>。</p>'
+        '<p class="muted">所有摘要均为原创概述并附原文链接，遵守版权红线'
+        '（不复制原文、不绕过付费墙）。</p>'
+    )
+    p.append(
+        '<p class="muted">仓库 '
+        '<a href="https://github.com/cxy0714/social_news" target="_blank" rel="noopener">github.com/cxy0714/social_news</a>'
+        ' · Maintained by '
+        '<a href="https://cxy0714.github.io/" target="_blank" rel="noopener">cxy0714.github.io</a></p>'
     )
     return "\n".join(p)
 
