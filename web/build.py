@@ -315,7 +315,17 @@ def build_home(docs: list[Doc]) -> str:
 
 
 def build_changelog() -> str:
-    """Render recent git history grouped by date. Degrades gracefully."""
+    """Render the curated CHANGELOG.md (Keep a Changelog style).
+
+    The changelog is a hand-maintained markdown file with per-release summaries,
+    not a raw dump of git subjects — so it reads as an actual product history.
+    Falls back to git log only if the file is missing.
+    """
+    changelog = ROOT / "CHANGELOG.md"
+    if changelog.exists():
+        return f'<div class="changelog prose">\n{render_md(changelog.read_text(encoding="utf-8"))}\n</div>'
+
+    # Fallback: derive a rough changelog from git history.
     try:
         raw = subprocess.run(
             ["git", "log", "--no-merges", "--date=short",
@@ -326,7 +336,7 @@ def build_changelog() -> str:
         raw = ""
 
     p = ['<h1>更新日志 Changelog</h1>',
-         '<p class="muted">自动从 git 提交历史生成，最近 200 条。</p>']
+         '<p class="muted">未找到 CHANGELOG.md，回退到 git 提交历史（最近 200 条）。</p>']
     if not raw.strip():
         p.append('<p class="muted">暂无提交记录（git 不可用或仓库为空）。</p>')
         return "\n".join(p)
