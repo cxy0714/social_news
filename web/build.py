@@ -34,8 +34,28 @@ FUTURE = ROOT / "future-tech"
 WEB = ROOT / "web"
 STATIC = WEB / "static"
 SOURCES = ROOT / "sources.md"
+WL_PUBLIC = WEB / "data" / "watchlist_public.json"
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+
+
+def load_public_watchlist_js() -> str:
+    """Inline the public watchlist snapshot so logged-out visitors see it.
+
+    scripts/publish_watchlist.py writes web/data/watchlist_public.json from the
+    private Gist (in CI, via the GIST_TOKEN secret). If it is missing we inline
+    an empty list — the site still works, the owner just sees their live gist
+    after logging in.
+    """
+    data = "[]"
+    if WL_PUBLIC.exists():
+        raw = WL_PUBLIC.read_text(encoding="utf-8").strip()
+        try:
+            json.loads(raw)          # validate so we never inline broken JSON
+            data = raw or "[]"
+        except json.JSONDecodeError:
+            data = "[]"
+    return f"window.__WATCHLIST_PUBLIC__ = {data};\n"
 
 
 class Doc:
@@ -353,11 +373,10 @@ def build_future(reports: list[Report]) -> str:
              '<h2>📌 待调研 Watchlist</h2>'
              '<div class="wl-actions">'
              '<button id="wl-refresh" class="btn-sm" type="button">刷新</button>'
-             '<button id="wl-settings" class="btn-sm" type="button">⚙ 设置 Gist</button>'
+             '<button id="wl-settings" class="btn-sm" type="button">⚙ 登录</button>'
              '</div></div>')
     p.append('<div id="wl-list" class="wl-list">'
-             '<p class="muted" id="wl-empty">未配置 Gist。点“⚙ 设置 Gist”填入 Gist ID 与 '
-             'token，即可在任意新闻条目旁用 ☆ 收藏，这里会列出待调研项。</p></div>')
+             '<p class="muted" id="wl-empty">加载中…</p></div>')
     p.append('</div>')
 
     # Report cards
@@ -495,19 +514,19 @@ FOOT_TMPL = """  </main>
 <div id="scrim" class="scrim"></div>
 <div id="gist-modal" class="modal" hidden>
   <div class="modal-card">
-    <h3>收藏设置 · GitHub Gist</h3>
-    <p class="muted">收藏清单存在你的一个私密 Gist。ID 与 token 仅存于本浏览器
-    (localStorage)，<strong>不会进仓库</strong>。token 需 <code>gist</code> 权限。</p>
-    <label>Gist ID<input id="gist-id" type="text" placeholder="如 a1b2c3d4..." autocomplete="off"></label>
-    <label>Token (仅 gist 权限)<input id="gist-token" type="password" placeholder="ghp_... / github_pat_..." autocomplete="off"></label>
-    <p class="muted modal-hint">还没有？到 <a href="https://gist.github.com" target="_blank" rel="noopener">gist.github.com</a>
-    新建一个私密 Gist（文件名 <code>watchlist.json</code>，内容 <code>[]</code>），URL 末段即 ID；
-    token 在 <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Settings → Tokens</a> 生成。</p>
+    <h3>登录 · GitHub Token</h3>
+    <p class="muted">粘贴一个有 <code>gist</code> 权限的 token 即可收藏——首次登录会自动
+    找到或新建一个私密 Gist 存清单，<strong>无需手填 ID</strong>。token 仅存于本浏览器
+    (localStorage)，<strong>不会进仓库</strong>。</p>
+    <label>Token (仅需 gist 权限)<input id="gist-token" type="password" placeholder="ghp_... / github_pat_..." autocomplete="off"></label>
+    <p class="muted modal-hint">没有 token？到 <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Settings → Developer settings → Tokens</a>
+    生成一个仅勾选 <code>gist</code> 权限的即可。登录后收藏与备注会存进你自己的私密 Gist，
+    公开只读快照由仓库定时任务生成。</p>
     <div class="modal-actions">
-      <button id="gist-clear" class="btn-sm" type="button">清除</button>
+      <button id="gist-clear" class="btn-sm" type="button">登出</button>
       <span class="modal-spacer"></span>
       <button id="gist-cancel" class="btn-sm" type="button">取消</button>
-      <button id="gist-save" class="btn-sm btn-primary" type="button">保存</button>
+      <button id="gist-save" class="btn-sm btn-primary" type="button">登录</button>
     </div>
     <p id="gist-msg" class="modal-msg" hidden></p>
   </div>
@@ -550,7 +569,7 @@ def build(out_dir: Path) -> None:
     reports = collect_reports()
 
     css = (STATIC / "style.css").read_text(encoding="utf-8")
-    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    js = load_public_watchlist_js() + (STATIC / "app.js").read_text(encoding="utf-8")
 
     dailies = sorted(
         [d for d in docs if not d.is_weekly and not d.is_full],

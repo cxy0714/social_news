@@ -14,6 +14,9 @@ on:
       - "stats/**"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch: {}
+  # 每天刷新一次公开收藏快照（即使当天没有新 digest 推送）
+  schedule:
+    - cron: "37 20 * * *"   # 20:37 UTC ≈ 次日 04:37 北京时间
 
 permissions:
   contents: read
@@ -36,6 +39,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install markdown
+      # 用私密 gist 里的收藏生成公开只读快照；build.py 会把它内联进单文件。
+      # 无 secret 时脚本写空快照，构建照常。token 只存在于 Action 环境，不入库。
+      - name: Publish public watchlist snapshot
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: python scripts/publish_watchlist.py
       - run: python web/build.py --out site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

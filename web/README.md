@@ -27,10 +27,12 @@ hash（`#2026-07-03`、`#stats` 等）客户端切换，只显示当前一个：
 ## 未来技术层与收藏（Gist）
 
 - `#future` 视图渲染 `future-tech/*.md` 报告为卡片；每篇报告另有独立视图。
-- 每条新闻条目旁有 **☆ 收藏按钮**（`app.js` 运行时注入），点击把该条写入你的一个
-  **私密 GitHub Gist**（`watchlist.json`）。Gist ID 与 token 存在浏览器 localStorage，
-  **绝不入库**；在 `#future` 页点「⚙ 设置 Gist」配置。读 Gist 免 token，写需 `gist`
-  权限的 token。纯 `file://` 可用（GitHub API 支持跨域）。详见 `future-tech/README.md`。digest 之间在 markdown 里的相对链接
+- 每条新闻条目旁有 **☆ 收藏按钮**（`app.js` 运行时注入）。在 `#future` 页点
+  「⚙ 登录」粘贴一个有 `gist` 权限的 token，首次登录**自动找/建**一个私密 Gist
+  （`watchlist.json`）存清单，**无需手填 ID**；收藏项可加备注。token 与 gist id 仅存
+  localStorage，**绝不入库**。**登出访客**看公开只读快照（`web/build.py` 内联
+  `web/data/watchlist_public.json`，由 `scripts/publish_watchlist.py` 在 CI 用仓库
+  secret `GIST_TOKEN` 从私密 Gist 现生成）。详见 `future-tech/README.md`。digest 之间在 markdown 里的相对链接
 （如 `[..](./2026-07-01-full.md)`）由构建脚本在渲染时改写成对应的 `#hash`，页内
 跳转直接生效——digest markdown 本身不改。
 

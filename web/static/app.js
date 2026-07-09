@@ -99,73 +99,110 @@
   show(decodeURIComponent(location.hash.slice(1)) || defaultView());
 })();
 
-// === future-tech bookmarks via GitHub Gist ================================
-// Reads a secret Gist (watchlist.json) — reading needs no token; writing does.
-// id + token live in localStorage only, never in the repo.
+// === future-tech watchlist via a private GitHub Gist ======================
+// Token-only: paste a PAT with `gist` scope; the client auto-finds or creates
+// ONE private gist (watchlist.json). Token + resolved gist id live in
+// localStorage only, never in the repo. Logged-out visitors see the public
+// read-only snapshot inlined as window.__WATCHLIST_PUBLIC__ (published by a
+// scheduled Action). Logged-in owner sees the live gist and can edit/note.
 (function () {
-  var LS_ID = "ft_gist_id", LS_TOKEN = "ft_gist_token", WL_FILE = "watchlist.json";
-  var API = "https://api.github.com/gists/";
-  var items = null;            // cached watchlist array
+  var LS_TOKEN = "sn_gist_token", LS_ID = "sn_gist_id";
+  var WL_FILE = "watchlist.json";
+  var GIST_DESC = "social_news · 未来技术待调研 watchlist（请勿删除）";
+  var API = "https://api.github.com";
+  var items = null;            // cached live watchlist array (owner)
   var loaded = false;
+  var saveTimer = null;
 
-  function cfg() {
-    return {
-      id: (localStorage.getItem(LS_ID) || "").trim(),
-      token: (localStorage.getItem(LS_TOKEN) || "").trim(),
-    };
-  }
-  function configured() { return !!cfg().id; }
+  function token() { return (localStorage.getItem(LS_TOKEN) || "").trim(); }
+  function gistId() { return (localStorage.getItem(LS_ID) || "").trim(); }
+  function loggedIn() { return !!token(); }
   function norm(u) { return (u || "").split("#")[0].replace(/\/$/, ""); }
+  function publicItems() {
+    var p = window.__WATCHLIST_PUBLIC__;
+    return Array.isArray(p) ? p : [];
+  }
 
-  // --- Gist I/O ------------------------------------------------------------
-  function readWatchlist() {
-    var c = cfg();
-    if (!c.id) return Promise.resolve([]);
+  function ghFetch(path, opts) {
+    opts = opts || {};
     var h = { Accept: "application/vnd.github+json" };
-    if (c.token) h.Authorization = "Bearer " + c.token;
-    return fetch(API + c.id, { headers: h }).then(function (r) {
-      if (!r.ok) throw new Error("读取 Gist 失败 (" + r.status + ")");
+    if (token()) h.Authorization = "Bearer " + token();
+    if (opts.body) h["Content-Type"] = "application/json";
+    return fetch(API + path, {
+      method: opts.method || "GET",
+      headers: h,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }).then(function (r) {
+      if (!r.ok) throw new Error("GitHub API " + r.status);
       return r.json();
+    });
+  }
+
+  // Find the watchlist gist for this token, or create it. Caches the id.
+  function ensureGist() {
+    if (gistId()) return Promise.resolve(gistId());
+    return ghFetch("/gists?per_page=100").then(function (gists) {
+      var found = (gists || []).filter(function (g) {
+        return g.description === GIST_DESC || (g.files && g.files[WL_FILE]);
+      })[0];
+      if (found) return found.id;
+      var body = { description: GIST_DESC, public: false, files: {} };
+      body.files[WL_FILE] = { content: "[]" };
+      return ghFetch("/gists", { method: "POST", body: body }).then(function (g) {
+        return g.id;
+      });
+    }).then(function (id) {
+      localStorage.setItem(LS_ID, id);
+      return id;
+    });
+  }
+
+  function readGist() {
+    return ensureGist().then(function (id) {
+      return ghFetch("/gists/" + id);
     }).then(function (g) {
       var f = g.files && g.files[WL_FILE];
       if (!f || !f.content) return [];
       try { return JSON.parse(f.content) || []; } catch (e) { return []; }
     });
   }
-  function writeWatchlist(arr) {
-    var c = cfg();
-    if (!c.id) return Promise.reject(new Error("未配置 Gist ID"));
-    if (!c.token) return Promise.reject(new Error("未配置 token，无法写入"));
+
+  function writeGist(arr) {
+    var id = gistId();
+    if (!id) return Promise.reject(new Error("未登录"));
     var body = { files: {} };
     body.files[WL_FILE] = { content: JSON.stringify(arr, null, 2) };
-    return fetch(API + c.id, {
-      method: "PATCH",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: "Bearer " + c.token,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }).then(function (r) {
-      if (!r.ok) throw new Error("写入 Gist 失败 (" + r.status + ")");
-      return arr;
-    });
+    return ghFetch("/gists/" + id, { method: "PATCH", body: body });
+  }
+  // Debounce writes so rapid note edits collapse into one PATCH.
+  function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      writeGist(items).catch(function (e) { toast("同步失败：" + e.message); });
+    }, 700);
   }
 
   function ensure() {
     if (loaded && items) return Promise.resolve(items);
-    return readWatchlist().then(function (a) {
-      items = a; loaded = true; return a;
-    });
+    if (!loggedIn()) { items = []; loaded = true; return Promise.resolve(items); }
+    return readGist().then(function (a) { items = a; loaded = true; return a; });
   }
   function has(url) {
-    if (!items) return false;
     var n = norm(url);
-    return items.some(function (it) { return norm(it.url) === n; });
+    var list = loggedIn() ? (items || []) : publicItems();
+    return list.some(function (it) { return norm(it.url) === n; });
   }
 
-  // --- bookmark buttons on every news item --------------------------------
-  // Digest items are "<li>… <a href=…>…</a> …"; add a ☆ toggle per <li>.
+  function escapeHtml(s) {
+    return (s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function nowISO() {
+    try { return new Date().toISOString().slice(0, 10); } catch (e) { return ""; }
+  }
+
+  // --- ☆ bookmark buttons on every news item ------------------------------
   function decorate() {
     var lis = document.querySelectorAll(".view-digest .prose li");
     lis.forEach(function (li) {
@@ -193,93 +230,102 @@
       b.textContent = on ? "★" : "☆";
     });
   }
-
-  function flash(btn, txt, ok) {
-    var old = btn.textContent;
+  function flash(btn, txt) {
     btn.textContent = txt;
-    btn.classList.toggle("err", !ok);
+    btn.classList.add("err");
     setTimeout(function () { btn.classList.remove("err"); refreshButtons(); }, 1400);
   }
+
   function onBookmark(e) {
     var btn = e.currentTarget;
-    if (!configured()) { openModal("请先设置 Gist（右上角未来技术页 ⚙）"); return; }
+    if (!loggedIn()) { openModal("请先登录：粘贴一个有 gist 权限的 token"); return; }
     ensure().then(function () {
       var url = btn.dataset.url, n = norm(url);
       if (has(url)) {
         items = items.filter(function (it) { return norm(it.url) !== n; });
       } else {
-        items.unshift({ title: btn.dataset.title, url: url, added: nowISO() });
+        items.unshift({ title: btn.dataset.title, url: url, added: nowISO(), note: "" });
       }
       btn.textContent = "…";
-      return writeWatchlist(items);
+      return writeGist(items);
     }).then(function () {
       refreshButtons(); renderWatchlist();
     }).catch(function (err) {
-      flash(btn, "!", false);
-      console.error(err); toast(err.message);
+      flash(btn, "!"); console.error(err); toast(err.message);
     });
-  }
-  function nowISO() {
-    try { return new Date().toISOString().slice(0, 10); } catch (e) { return ""; }
   }
 
   // --- watchlist widget on the future page --------------------------------
-  function renderWatchlist() {
-    var box = document.getElementById("wl-list");
-    if (!box) return;
-    if (!configured()) {
-      box.innerHTML = '<p class="muted">未配置 Gist。点“⚙ 设置 Gist”即可开始收藏。</p>';
+  function itemRow(it, editable) {
+    var date = it.added ? '<span class="wl-date">' + escapeHtml(it.added) + "</span> " : "";
+    var src = it.source ? ' <span class="wl-src">· ' + escapeHtml(it.source) + "</span>" : "";
+    var head = date + '<a href="' + encodeURI(it.url) + '" target="_blank" rel="noopener">' +
+      escapeHtml(it.title || it.url) + "</a>" + src;
+    var note = it.note || "";
+    if (editable) {
+      return '<li data-url="' + escapeHtml(it.url) + '">' +
+        '<div class="wl-row">' + head +
+        '<button type="button" class="wl-rm" title="移除">✕</button></div>' +
+        '<textarea class="wl-note" placeholder="备注（会随公开快照公开）">' +
+        escapeHtml(note) + "</textarea></li>";
+    }
+    var noteRo = note ? '<div class="wl-note-ro">' + escapeHtml(note) + "</div>" : "";
+    return "<li>" + '<div class="wl-row">' + head + "</div>" + noteRo + "</li>";
+  }
+
+  function renderList(box, arr, editable) {
+    if (!arr.length) {
+      box.innerHTML = '<p class="muted">' +
+        (editable ? "清单为空。在任意新闻条目旁点 ☆ 即可收藏。"
+                  : "暂无公开收藏。") + "</p>";
       return;
     }
-    box.innerHTML = '<p class="muted">加载中…</p>';
-    ensure().then(function (arr) {
-      if (!arr.length) {
-        box.innerHTML = '<p class="muted">清单为空。在任意新闻条目旁点 ☆ 即可收藏。</p>';
-        return;
-      }
-      var ul = document.createElement("ul");
-      ul.className = "wl-items";
-      arr.forEach(function (it) {
-        var li = document.createElement("li");
-        var d = it.added ? '<span class="wl-date">' + it.added + "</span> " : "";
-        li.innerHTML = d + '<a href="' + it.url + '" target="_blank" rel="noopener">' +
-          escapeHtml(it.title || it.url) + "</a>";
-        var rm = document.createElement("button");
-        rm.type = "button"; rm.className = "wl-rm"; rm.textContent = "✕";
-        rm.title = "移除"; rm.dataset.url = it.url;
-        rm.addEventListener("click", onRemove);
-        li.appendChild(rm);
-        ul.appendChild(li);
+    var html = '<ul class="wl-items">';
+    arr.forEach(function (it) { html += itemRow(it, editable); });
+    html += "</ul>";
+    box.innerHTML = html;
+    if (editable) wireEditable(box);
+  }
+
+  function wireEditable(box) {
+    box.querySelectorAll(".wl-rm").forEach(function (rm) {
+      rm.addEventListener("click", function () {
+        var url = rm.closest("li").dataset.url, n = norm(url);
+        items = (items || []).filter(function (it) { return norm(it.url) !== n; });
+        writeGist(items).then(function () { renderWatchlist(); refreshButtons(); })
+          .catch(function (e) { toast(e.message); });
       });
-      box.innerHTML = "";
-      box.appendChild(ul);
-    }).catch(function (err) {
-      box.innerHTML = '<p class="muted">读取失败：' + escapeHtml(err.message) + "</p>";
     });
-  }
-  function onRemove(e) {
-    var url = e.currentTarget.dataset.url, n = norm(url);
-    items = (items || []).filter(function (it) { return norm(it.url) !== n; });
-    e.currentTarget.closest("li").style.opacity = ".4";
-    writeWatchlist(items).then(function () {
-      renderWatchlist(); refreshButtons();
-    }).catch(function (err) { toast(err.message); renderWatchlist(); });
-  }
-  function escapeHtml(s) {
-    return (s || "").replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    box.querySelectorAll(".wl-note").forEach(function (ta) {
+      ta.addEventListener("input", function () {
+        var url = ta.closest("li").dataset.url, n = norm(url);
+        var it = (items || []).filter(function (x) { return norm(x.url) === n; })[0];
+        if (it) { it.note = ta.value; scheduleSave(); }
+      });
     });
   }
 
-  // --- settings modal ------------------------------------------------------
+  function renderWatchlist() {
+    var box = document.getElementById("wl-list");
+    if (!box) return;
+    if (!loggedIn()) {
+      renderList(box, publicItems(), false);
+      return;
+    }
+    box.innerHTML = '<p class="muted">加载中…</p>';
+    ensure().then(function (arr) { renderList(box, arr, true); })
+      .catch(function (err) {
+        box.innerHTML = '<p class="muted">读取失败：' + escapeHtml(err.message) +
+          '（token 是否有 gist 权限？）</p>';
+      });
+  }
+
+  // --- login modal (token only) -------------------------------------------
   var modal = document.getElementById("gist-modal");
   function openModal(hint) {
     if (!modal) return;
-    var c = cfg();
-    var idEl = document.getElementById("gist-id");
     var tkEl = document.getElementById("gist-token");
-    if (idEl) idEl.value = c.id;
-    if (tkEl) tkEl.value = c.token;
+    if (tkEl) tkEl.value = token();
     var msg = document.getElementById("gist-msg");
     if (msg) {
       msg.hidden = !hint; msg.textContent = hint || "";
@@ -293,24 +339,23 @@
     if (!modal) return;
     var save = document.getElementById("gist-save");
     var cancel = document.getElementById("gist-cancel");
-    var clear = document.getElementById("gist-clear");
+    var logout = document.getElementById("gist-clear");
     save && save.addEventListener("click", function () {
-      var id = (document.getElementById("gist-id").value || "").trim();
       var tk = (document.getElementById("gist-token").value || "").trim();
-      // accept a full gist URL — keep the last path segment as the id
-      id = id.replace(/^https?:\/\/[^/]+\//, "").split("/").pop().split("#")[0];
-      localStorage.setItem(LS_ID, id);
-      if (tk) localStorage.setItem(LS_TOKEN, tk);
+      if (!tk) { openModal("请粘贴 token"); return; }
+      localStorage.setItem(LS_TOKEN, tk);
+      localStorage.removeItem(LS_ID);   // re-discover under the new token
       loaded = false; items = null;
       closeModal();
-      renderWatchlist(); ensure().then(refreshButtons);
+      renderWatchlist();
+      ensure().then(refreshButtons).catch(function (e) { toast(e.message); });
     });
     cancel && cancel.addEventListener("click", closeModal);
-    clear && clear.addEventListener("click", function () {
-      localStorage.removeItem(LS_ID); localStorage.removeItem(LS_TOKEN);
+    logout && logout.addEventListener("click", function () {
+      localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_ID);
       loaded = false; items = null;
-      document.getElementById("gist-id").value = "";
-      document.getElementById("gist-token").value = "";
+      var tkEl = document.getElementById("gist-token");
+      if (tkEl) tkEl.value = "";
       closeModal(); renderWatchlist(); refreshButtons();
     });
     modal.addEventListener("click", function (e) {
@@ -336,17 +381,17 @@
     var rBtn = document.getElementById("wl-refresh");
     sBtn && sBtn.addEventListener("click", function () { openModal(""); });
     rBtn && rBtn.addEventListener("click", function () {
-      loaded = false; items = null; renderWatchlist(); ensure().then(refreshButtons);
+      loaded = false; items = null; renderWatchlist();
+      ensure().then(refreshButtons).catch(function () {});
     });
     decorate();
-    if (configured()) {
-      ensure().then(function () { refreshButtons(); renderWatchlist(); })
-        .catch(function (e) { console.error(e); });
-    } else {
-      renderWatchlist();
+    renderWatchlist();
+    if (loggedIn()) {
+      ensure().then(refreshButtons).catch(function (e) { console.error(e); });
     }
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else { init(); }
 })();
+

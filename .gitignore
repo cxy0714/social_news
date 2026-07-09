@@ -7,3 +7,6 @@ venv/
 
 # 网页构建产物（由 web/build.py 生成的单文件 site/index.html，本地查看，不入库）
 site/
+
+# 公开收藏快照（CI 用 GIST_TOKEN 从私密 gist 现生成，内联进 site/，不入库）
+web/data/watchlist_public.json

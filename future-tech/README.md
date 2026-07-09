@@ -7,11 +7,17 @@
 ## 两个组成部分
 
 1. **待办清单（watchlist）— 存在 GitHub Gist，不入库。**
-   站点里每条新闻旁有 ☆ 收藏按钮，点击把该条（标题 + 链接 + 时间）写进你的一个
-   私密 Gist。未来技术页顶部会读取这个 Gist 渲染成"待调研"清单。Gist 的 id 和
-   token 存在浏览器 localStorage，**绝不进仓库**（见站点「未来技术」页的 ⚙ 设置）。
+   站点里每条新闻旁有 ☆ 收藏按钮。在「未来技术」页点 **⚙ 登录**、粘贴一个有
+   `gist` 权限的 token 即可——首次登录会**自动找到或新建**一个私密 Gist
+   （`watchlist.json`）存清单，**无需手填 Gist ID**。收藏项可加**备注**。token 与
+   解析出的 gist id 只存浏览器 localStorage，**绝不进仓库**。
 
-   > 为什么用 Gist：站点是本地 `file://` 静态页，没有后端，按钮无法直接写文件/git。
+   **公开只读快照**：私密 Gist 只有你看得到，为了让登出访客也能看收藏，仓库有一个
+   定时 Action（`.github/workflows/deploy-pages.yml` 里的 publish 步骤）用仓库 secret
+   `GIST_TOKEN` 读你的 Gist，导出 `web/data/watchlist_public.json`，由 `build.py`
+   内联进站点。登出看快照（含备注，只读），登录后看你的实时 Gist 并可增删/改备注。
+
+   > 为什么用 Gist：站点是纯静态页（GitHub Pages，无后端），按钮无法直接写文件/git。
    > Gist + GitHub API 支持跨域读写，是纯前端能落地的最轻方案。
 
 2. **报告（reports）— 就是本目录下的 markdown，入库。**
