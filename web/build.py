@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - guidance for local runs
 ROOT = Path(__file__).resolve().parent.parent
 DIGESTS = ROOT / "digests"
 FUTURE = ROOT / "future-tech"
+EVALS = ROOT / "evals"
 WEB = ROOT / "web"
 STATIC = WEB / "static"
 SOURCES = ROOT / "sources.md"
@@ -148,6 +149,33 @@ def collect_reports() -> list[Report]:
     return reports
 
 
+class Eval:
+    """One model-comparison page under evals/ (DeepSeek vs Claude)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.slug = "eval-" + path.stem  # view id, namespaced
+        raw = path.read_text(encoding="utf-8")
+        self.title = Doc._first_heading(raw) or path.stem
+        self.date = Doc._parse_date(path.stem)
+        self.md = raw
+
+    @property
+    def view_id(self) -> str:
+        return self.slug
+
+
+def collect_evals() -> list["Eval"]:
+    evals: list[Eval] = []
+    if EVALS.exists():
+        for p in sorted(EVALS.glob("*.md")):
+            if p.stem.upper() == "README":
+                continue
+            evals.append(Eval(p))
+    evals.sort(key=lambda e: (e.date or dt.date.min), reverse=True)
+    return evals
+
+
 # Cross-digest links in the markdown look like [text](./2026-07-01-full.md).
 # In the single-file site every digest is an in-page view, so rewrite those to
 # the matching #hash. The digest markdown stays untouched — this is render-only.
@@ -219,6 +247,7 @@ def build_topnav(daily_href: str, weekly_href: str) -> str:
         ("daily", "每日 Daily", daily_href),
         ("weekly", "每周 Weekly", weekly_href),
         ("future", "未来技术 Future", "#future"),
+        ("eval", "模型测评 Eval", "#eval"),
         ("sources", "来源 Sources", "#sources"),
         ("changelog", "更新 Changelog", "#changelog"),
         ("stats", "统计 Stats", "#stats"),
@@ -457,6 +486,47 @@ def report_section(r: Report) -> str:
     )
 
 
+def build_eval_landing(evals: list["Eval"]) -> str:
+    """Landing page for the model-eval layer: intro + comparison cards."""
+    p = ['<h1>模型测评 · Model Eval</h1>']
+    p.append(
+        '<p class="lede">同一天的每日 digest，用不同模型（<strong>DeepSeek</strong> vs '
+        '<strong>Claude</strong>）各生成一版，<strong>并排对比</strong>分类粒度、去重合并、'
+        '摘要笔法与「概念观察」的抽取质量。仅供观察差异，非排名。</p>'
+    )
+    p.append('<h2>对比报告 Comparisons</h2>')
+    if evals:
+        p.append('<div class="ft-cards">')
+        for e in evals:
+            date = e.date.isoformat() if e.date else e.slug
+            p.append(
+                f'<a class="ft-card" href="#{e.view_id}">'
+                f'<div class="card-date">{date}</div>'
+                f'<div class="card-title">{html.escape(e.title)}</div>'
+                f'<div class="ft-card-sum">DeepSeek vs Claude</div>'
+                f'<div class="card-cta">查看对比 →</div></a>'
+            )
+        p.append('</div>')
+    else:
+        p.append('<p class="muted">暂无对比。运行 <code>python scripts/build_eval.py</code> 生成。</p>')
+    p.append(
+        '<p class="muted">生成方式见 <code>scripts/build_eval.py</code>；'
+        '版权红线同 <code>instruction.md</code>（只写原创摘要 + 附链接）。</p>'
+    )
+    return "\n".join(p)
+
+
+def eval_section(e: "Eval") -> str:
+    return (
+        f'<section class="view-digest" data-view="{e.view_id}" data-kind="eval" '
+        f'data-nav="eval" data-title="{html.escape(e.title)}" hidden>\n'
+        f'<article class="prose">\n{render_md(e.md)}\n</article>\n'
+        f'<footer class="page-foot">\n'
+        f'两栏均为原创摘要并附原文链接，未复制原文。仅供观察模型在同一任务上的差异，非排名。'
+        f'\n</footer>\n</section>'
+    )
+
+
 def build_stats(docs: list[Doc]) -> str:
     dailies = sorted(
         [d for d in docs if not d.is_weekly and not d.is_full],
@@ -609,6 +679,7 @@ def build(out_dir: Path) -> None:
     if not docs:
         raise SystemExit("No digests found under digests/*.md")
     reports = collect_reports()
+    evals = collect_evals()
 
     css = (STATIC / "style.css").read_text(encoding="utf-8")
     js = load_public_watchlist_js() + (STATIC / "app.js").read_text(encoding="utf-8")
@@ -639,6 +710,9 @@ def build(out_dir: Path) -> None:
     parts.append(standalone_section("future", "未来技术 Future Tech", build_future(reports)))
     for r in reports:
         parts.append(report_section(r))
+    parts.append(standalone_section("eval", "模型测评 Model Eval", build_eval_landing(evals)))
+    for e in evals:
+        parts.append(eval_section(e))
     parts.append(standalone_section("sources", "来源媒体介绍 Sources Guide", build_sources()))
     parts.append(standalone_section("changelog", "更新日志 Changelog", build_changelog()))
     parts.append(standalone_section("stats", "统计 Stats", build_stats(docs)))
@@ -649,7 +723,7 @@ def build(out_dir: Path) -> None:
     (out_dir / "index.html").write_text(doc_html, encoding="utf-8")
     print(
         f"Built single-file site: {len(docs)} digests + {len(reports)} reports "
-        f"+ 5 pages -> {out_dir / 'index.html'}"
+        f"+ {len(evals)} evals + 6 pages -> {out_dir / 'index.html'}"
     )
 
 
