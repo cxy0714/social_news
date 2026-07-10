@@ -241,11 +241,11 @@ def build_sidebar(docs: list[Doc]) -> str:
 
 # --- top navigation ------------------------------------------------------
 
-def build_topnav(daily_href: str, weekly_href: str) -> str:
+def build_topnav() -> str:
     items = [
         ("home", "首页 Home", "#home"),
-        ("daily", "每日 Daily", daily_href),
-        ("weekly", "每周 Weekly", weekly_href),
+        ("daily", "每日 Daily", "#daily"),
+        ("weekly", "每周 Weekly", "#weekly"),
         ("future", "未来技术 Future", "#future"),
         ("eval", "模型测评 Eval", "#eval"),
         ("sources", "来源 Sources", "#sources"),
@@ -372,6 +372,89 @@ def build_home(docs: list[Doc]) -> str:
         ' · Maintained by '
         '<a href="https://cxy0714.github.io/" target="_blank" rel="noopener">cxy0714.github.io</a></p>'
     )
+    return "\n".join(p)
+
+
+def _month_label(d: dt.date) -> str:
+    return f"{d.year} 年 {d.month:02d} 月"
+
+
+def build_daily_archive(docs: list[Doc]) -> str:
+    """Full archive of every daily issue, grouped by month, newest first."""
+    dailies = sorted(
+        [d for d in docs if not d.is_weekly and not d.is_full],
+        key=lambda d: (d.date or dt.date.min), reverse=True,
+    )
+    fulls = {d.slug.replace("-full", ""): d for d in docs if d.is_full}
+    total_items = sum(digest_metrics(d)["items"] for d in dailies)
+
+    p = ['<h1>每日归档 · Daily Archive</h1>']
+    p.append(
+        '<p class="lede">按月归档的每日新闻摘要，共 '
+        f'<strong>{len(dailies)}</strong> 期。点任意一期看全文；侧栏日期轨也可快速跳转。</p>'
+    )
+    p.append('<div class="stat-row">')
+    p.append(f'<div class="stat"><b>{len(dailies)}</b><span>期数 Issues</span></div>')
+    p.append(f'<div class="stat"><b>{total_items}</b><span>累计条目 Items</span></div>')
+    p.append("</div>")
+
+    if not dailies:
+        p.append('<p class="muted">暂无每日期数。</p>')
+        return "\n".join(p)
+
+    cur = None
+    for d in dailies:
+        key = _month_label(d.date) if d.date else "未标注日期"
+        if key != cur:
+            if cur is not None:
+                p.append("</ul>")
+            p.append(f'<h2>{key}</h2><ul class="link-list">')
+            cur = key
+        date = d.date.isoformat() if d.date else d.slug
+        m = digest_metrics(d)
+        extra = ""
+        full = fulls.get(d.slug)
+        if full:
+            extra = f' <a class="arc-full" href="#{full.view_id}">全量 full</a>'
+        p.append(
+            f'<li><a href="#{d.view_id}"><span class="ll-date">{date}</span> '
+            f'{html.escape(d.title)} <span class="arc-meta">· {m["items"]} 条</span></a>'
+            f'{extra}</li>'
+        )
+    p.append("</ul>")
+    return "\n".join(p)
+
+
+def build_weekly_archive(docs: list[Doc]) -> str:
+    """Full archive of every weekly synthesis, newest first."""
+    weeklies = sorted(
+        [d for d in docs if d.is_weekly],
+        key=lambda d: (d.date or dt.date.min), reverse=True,
+    )
+    p = ['<h1>每周归档 · Weekly Archive</h1>']
+    p.append(
+        '<p class="lede">每篇每周综述把一周关键脉络收拢成趋势观察，共 '
+        f'<strong>{len(weeklies)}</strong> 篇。</p>'
+    )
+    if not weeklies:
+        p.append('<p class="muted">暂无每周综述。生成方式见 '
+                 '<code>scripts/generate_weekly.py</code>。</p>')
+        return "\n".join(p)
+
+    cur = None
+    for d in weeklies:
+        key = _month_label(d.date) if d.date else "未标注日期"
+        if key != cur:
+            if cur is not None:
+                p.append("</ul>")
+            p.append(f'<h2>{key}</h2><ul class="link-list">')
+            cur = key
+        date = d.date.isoformat() if d.date else d.slug
+        p.append(
+            f'<li><a href="#{d.view_id}"><span class="ll-date">{date}</span> '
+            f'{html.escape(d.title)}</a></li>'
+        )
+    p.append("</ul>")
     return "\n".join(p)
 
 
@@ -684,27 +767,18 @@ def build(out_dir: Path) -> None:
     css = (STATIC / "style.css").read_text(encoding="utf-8")
     js = load_public_watchlist_js() + (STATIC / "app.js").read_text(encoding="utf-8")
 
-    dailies = sorted(
-        [d for d in docs if not d.is_weekly and not d.is_full],
-        key=lambda d: (d.date or dt.date.min), reverse=True,
-    )
-    weeklies = sorted(
-        [d for d in docs if d.is_weekly],
-        key=lambda d: (d.date or dt.date.min), reverse=True,
-    )
-    daily_href = f"#{(dailies[0] if dailies else docs[0]).view_id}"
-    weekly_href = f"#{weeklies[0].view_id}" if weeklies else "#home"
-
     parts: list[str] = [
         HEAD_TMPL.format(
             css=css,
-            topnav=build_topnav(daily_href, weekly_href),
+            topnav=build_topnav(),
             sidebar=build_sidebar(docs),
         )
     ]
 
     # home is the default landing view when there is no hash
     parts.append(standalone_section("home", "首页 Home", build_home(docs), is_default=True))
+    parts.append(standalone_section("daily", "每日归档 Daily Archive", build_daily_archive(docs)))
+    parts.append(standalone_section("weekly", "每周归档 Weekly Archive", build_weekly_archive(docs)))
     for d in docs:
         parts.append(digest_section(d, is_default=False))
     parts.append(standalone_section("future", "未来技术 Future Tech", build_future(reports)))
@@ -723,7 +797,7 @@ def build(out_dir: Path) -> None:
     (out_dir / "index.html").write_text(doc_html, encoding="utf-8")
     print(
         f"Built single-file site: {len(docs)} digests + {len(reports)} reports "
-        f"+ {len(evals)} evals + 6 pages -> {out_dir / 'index.html'}"
+        f"+ {len(evals)} evals + 8 pages -> {out_dir / 'index.html'}"
     )
 
 
