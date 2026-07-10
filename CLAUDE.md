@@ -11,7 +11,7 @@ git. State persists *only* through committed files — each cloud run is a fresh
 clone with no memory, so **every run must `git add . && git commit && git push`**
 or its work is lost.
 
-Two distinct execution modes exist; know which one you are in:
+Three distinct execution modes exist; know which one you are in:
 
 1. **Cloud scheduled task (primary).** Claude runs on Anthropic's cloud nightly,
    uses its *own* `web_search`/`web_fetch` to survey newspapers, writes the
@@ -20,6 +20,17 @@ Two distinct execution modes exist; know which one you are in:
 2. **Local helper.** `scripts/fetch_news.py` runs on a user's own machine (no
    cloud egress restrictions) to pre-fetch RSS candidates. Claude then classifies
    and summarizes those candidates into a digest.
+3. **Local API pipeline (自动无人值守).** `scripts/generate_digest.py` runs
+   end-to-end on the user's Windows machine via a scheduled task: RSS candidates
+   → fetch public article bodies (in-memory, LLM context only) → an LLM
+   (DeepSeek by default, or Claude — switched via `LLM_PROVIDER` in `.env`)
+   classifies/dedupes/summarizes → renders the `instruction.md` §3 template →
+   writes `digests/YYYY-MM-DD.md`, updates the README index, optionally
+   commits/pushes. This is the "定时任务用 API" mode. Copyright rules (§2) still
+   hold: fetched bodies are never written to the digest or committed; paywalled
+   hosts (`PAYWALL_HOSTS`) use RSS headline/blurb only. Config lives in `.env`
+   (gitignored); see `.env.example` and `scripts/README.md`. Scheduled-task
+   wrappers: `scripts/run_daily.ps1` + `scripts/setup_task.ps1`.
 
 ## Producing a digest (the core task)
 
@@ -76,6 +87,19 @@ python3 scripts/fetch_news.py --out PATH   # custom output
   运行时从 Gist 拉取，构建脚本不碰 Gist、不消耗 token。
 - 云端定时任务不涉及这一层；报告由用户在交互会话里请求生成（"从这条写一篇未来技术
   调研"）。
+
+## 模型测评层（evals/）
+
+又一个独立产出：同一天的每日 digest 用**不同模型**各生成一版并排对比（当前 DeepSeek
+vs Claude），观察分类粒度、去重合并、摘要笔法与「概念观察」的抽取差异。
+
+- **产出**是入库 markdown `evals/YYYY-MM-DD.md`，格式见 `evals/README.md`：两大段
+  `## 🟦 DeepSeek` / `## 🟩 Claude`，各自内部是降一级的五大类分区 + 概念观察。
+- 生成脚本 `scripts/build_eval.py`：DeepSeek 方**复用**当天 `digests/YYYY-MM-DD.md`
+  正文（省一次调用），Claude 方按 `generate_digest.py` 同一流水线现抓候选重跑；两个
+  provider 的 key 都要在 `.env` 就绪。版权红线同 §2。
+- `web/build.py` 渲染 `#eval` 落地页与各对比视图（topnav「模型测评 Eval」tab）。
+  云端定时任务不涉及这一层。
 
 ## Conventions
 

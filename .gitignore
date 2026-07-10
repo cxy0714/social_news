@@ -1,6 +1,12 @@
 # 本地抓取中间产物（candidate lists）
 digests/_raw-*.md
 
+# 本地 API 密钥（generate_digest.py 用；绝不入库）
+.env
+
+# 计划任务运行日志
+logs/
+
 # Python 虚拟环境
 .venv/
 venv/

@@ -76,3 +76,60 @@ python3 scripts/fetch_guardian.py --out digests/_raw-guardian-2026-06-30.md
 要调整在脚本顶部 `KEEP_SECTIONS` 改即可。输出与 `fetch_news.py` 同构，可与 RSS 候选合并后交给 Claude 分类摘要。
 
 > 想要**多源**真历史：可类比再加 NYT Article Search API，或用 GDELT（免费、回溯多年、一接口多源）。Guardian 一家已能覆盖政治/经济/世界/环境/社会，足够撑起每周综述的回溯部分。
+
+---
+
+## generate_digest.py — 本地 API 版·端到端生成 digest
+
+与云端 Claude 本体模式并存的**第三种执行方式**：在你自己的电脑上，用脚本一条龙跑完
+「RSS 抓候选 → 抓公开正文喂 LLM → LLM 分类去重+中文摘要 → 写 `digests/YYYY-MM-DD.md`
++ 更新 README → 可选 commit/push」。LLM 后端可在 **DeepSeek**（默认，官方或交大网关）
+和 **Claude**（Anthropic 官方 API）之间切换。**仅标准库**（`urllib` + `html.parser`）。
+
+**一次性配置**：把根目录 `.env.example` 复制为 `.env`，填 provider 与 key：
+
+```bash
+cp .env.example .env      # 然后编辑：LLM_PROVIDER / *_API_KEY / *_MODEL
+```
+
+**用法**：
+
+```bash
+python3 scripts/generate_digest.py                 # 今天，过去 24h，不 commit
+python3 scripts/generate_digest.py --hours 48
+python3 scripts/generate_digest.py --commit        # 生成后自动 add/commit/push
+python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘（省钱自检）
+python3 scripts/generate_digest.py --no-body       # 不抓正文，仅用标题（更快更省 token）
+python3 scripts/generate_digest.py --max-items 100 # 喂给 LLM 的候选上限
+```
+
+### 版权红线（同 instruction.md §2）
+- 抓来的正文**只在内存里喂给 LLM 做理解**，产出仍是原创中文摘要(≤50字)+链接，
+  **正文绝不写进 digest、绝不 commit**。
+- 付费墙 / 强反爬站点（WSJ/FT/经济学人/Bloomberg/NYT 等，见脚本 `PAYWALL_HOSTS`）
+  **只用 RSS 公开标题+摘要，不抓正文**。
+
+### Windows 计划任务（无人值守）
+
+```powershell
+# 1) 先手动验证一次（不提交）
+powershell -ExecutionPolicy Bypass -File scripts\run_daily.ps1 -NoCommit
+
+# 2) 注册每天定时任务（默认 07:30，自动 commit/push）
+powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1 -Time 07:30
+
+# 立即触发一次 / 删除任务
+Start-ScheduledTask -TaskName social-news-daily
+powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1 -Remove
+```
+
+- `run_daily.ps1`：wrapper，自动选 `.venv` 或 PATH 上的 python，运行主脚本并把输出
+  写进 `logs/digest-YYYY-MM-DD.log`（`logs/` 已 gitignore）。
+- `setup_task.ps1`：注册/删除计划任务，`-StartWhenAvailable` 让关机错过后开机补跑。
+- **交大网关**（`https://models.sjtu.edu.cn/api/v1`）只在校园网/内网可达，正因如此本模式
+  跑在本地而非云端。
+
+### llm_client.py
+provider 抽象层：`chat_json(system, user) -> dict`，内部封装 DeepSeek（OpenAI 兼容
+`/chat/completions`）与 Claude（`/v1/messages`）的差异，带超时/重试/JSON 抽取；另含极简
+`load_dotenv()`。切 provider 只改 `.env` 里的 `LLM_PROVIDER`，脚本无需改动。
