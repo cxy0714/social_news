@@ -7,9 +7,11 @@ digests/_raw-*.md
 # 计划任务运行日志
 logs/
 
-# Python 虚拟环境
+# Python 虚拟环境与字节码缓存
 .venv/
 venv/
+__pycache__/
+*.pyc
 
 # 网页构建产物（由 web/build.py 生成的单文件 site/index.html，本地查看，不入库）
 site/

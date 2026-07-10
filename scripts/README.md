@@ -115,13 +115,50 @@ python3 scripts/generate_digest.py --max-items 100 # 喂给 LLM 的候选上限
 # 1) 先手动验证一次（不提交）
 powershell -ExecutionPolicy Bypass -File scripts\run_daily.ps1 -NoCommit
 
-# 2) 注册每天定时任务（默认 07:30，自动 commit/push）
-powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1 -Time 07:30
+# 2) 注册计划任务（默认每天 06:00 + 开机/登录后 2 分钟；均自动 commit/push）
+powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1 -Time 06:00 -BootDelayMin 2
 
-# 立即触发一次 / 删除任务
+# 立即触发一次 / 删除（两个任务一起删）
 Start-ScheduledTask -TaskName social-news-daily
 powershell -ExecutionPolicy Bypass -File scripts\setup_task.ps1 -Remove
 ```
+
+`setup_task.ps1` 注册**两个**任务，都跑 `run_daily.ps1`（幂等，已存在的天/周会跳过）：
+
+- **`social-news-daily`** —— 每天 `-Time`（默认 **06:00**）跑。
+- **`social-news-boot`** —— 登录后延迟 `-BootDelayMin`（默认 **2**）分钟跑，专为「关机
+  几天后开机补最近缺的新闻」。用 `AtLogOn` 而非 `AtStartup`：登录时才在当前用户会话里、
+  带 git 凭据与网络就绪。
+
+`run_daily.ps1` 每次都走**补缺模式**：
+
+1. `generate_digest.py --catch-up --lookback N`（默认 N=3）——补过去 N 天里缺的日报
+   （含今天），一次抓取 RSS、逐天筛窗生成、一次提交。太久的往日 RSS 已滚出窗口，
+   那几天无候选自动跳过（正常）。
+2. 日报成功后 `generate_weekly.py --catch-up`——补已完结（周日≤今天）但缺 weekly 的
+   ISO 周（关机错过周日也能事后追上）。任一步非 0 退出，整体退出码即非 0。
+
+- 两个 `.ps1` 存为 **UTF-8 BOM**：计划任务用的 Windows PowerShell 5.1 会把无 BOM 文件
+  当 GBK 读，中文注释会解析失败——加 BOM 一劳永逸。改脚本后保持带 BOM 存盘。
+
+## generate_weekly.py — 本地 API 版·每周综述
+
+把当周（ISO 周一→周日）已落地的 7 份日报 `digests/YYYY-MM-DD.md` 喂给 LLM 做跨日主线
+梳理 + 五类分区 + 中文原创综述，写 `digests/weekly-周日.md` + 更新 README「每周综述」
+索引。**不重新抓 RSS**（省一次抓取，也更贴合「综述」语义）；链接沿用日报里的原文链接。
+版权红线同 §2：输入是本仓库自己的原创日报，产出仍是原创综述 + 链接。
+
+```bash
+python3 scripts/generate_weekly.py                  # 本周（今天所在 ISO 周），不 commit
+python3 scripts/generate_weekly.py --date 2026-07-12    # 指定周内任一天
+python3 scripts/generate_weekly.py --commit         # 生成后 pull --rebase + commit/push
+python3 scripts/generate_weekly.py --dry-run        # 只列当周日报文件，不调 LLM
+python3 scripts/generate_weekly.py --catch-up --commit   # 补已完结但缺的周综述
+```
+
+> `git_commit_push`（复用自 `generate_digest.py`）**push 前先 `git pull --rebase --autostash`**，
+> 与云端定时任务共推同一仓库时避免 non-fast-forward 被拒。每日/每周都走这条。
 
 - `run_daily.ps1`：wrapper，自动选 `.venv` 或 PATH 上的 python，运行主脚本并把输出
   写进 `logs/digest-YYYY-MM-DD.log`（`logs/` 已 gitignore）。

@@ -29,8 +29,25 @@ Three distinct execution modes exist; know which one you are in:
    commits/pushes. This is the "定时任务用 API" mode. Copyright rules (§2) still
    hold: fetched bodies are never written to the digest or committed; paywalled
    hosts (`PAYWALL_HOSTS`) use RSS headline/blurb only. Config lives in `.env`
-   (gitignored); see `.env.example` and `scripts/README.md`. Scheduled-task
-   wrappers: `scripts/run_daily.ps1` + `scripts/setup_task.ps1`.
+   (gitignored); see `.env.example` and `scripts/README.md`. `git_commit_push`
+   runs `git pull --rebase --autostash` **before** push so the local machine and
+   the cloud task can share one repo without non-fast-forward rejections.
+
+   **Scheduling.** `scripts/setup_task.ps1` registers **two** tasks, both running
+   `scripts/run_daily.ps1`: `social-news-daily` at `-Time` (default **06:00**),
+   and `social-news-boot` at logon + `-BootDelayMin` (default **2**) minutes — the
+   latter catches up after the PC was off for days. `run_daily.ps1` always runs in
+   **catch-up mode**: `generate_digest.py --catch-up --lookback N` (default N=3)
+   backfills any missing `digests/YYYY-MM-DD.md` in the last N days (today + past
+   days), fetching RSS once and filtering per Beijing-day window; days whose RSS
+   has already rolled out of the window yield no candidates and are skipped. Then,
+   on success, `generate_weekly.py --catch-up` backfills any completed ISO week
+   (Sunday ≤ today) missing its `digests/weekly-YYYY-MM-DD.md` — synthesized from
+   that week's daily digests (no fresh RSS fetch), Sunday-dated, README weekly
+   index updated. Both tasks are idempotent: an already-present day/week is
+   skipped. The `.ps1` wrappers are stored **UTF-8 with BOM**: the scheduled
+   task's Windows PowerShell 5.1 reads BOM-less files as GBK and fails to parse
+   the Chinese comments.
 
 ## Producing a digest (the core task)
 

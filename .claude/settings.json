@@ -33,7 +33,12 @@
       "Bash(python web/build.py)",
       "Bash(rm -rf scripts/__pycache__ web/__pycache__)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python scripts/generate_weekly.py --dry-run --date 2026-07-08)",
+      "Bash(powershell -NoProfile -Command ' *)",
+      "Bash(timeout 30 python scripts/generate_digest.py --catch-up --lookback 0)",
+      "Bash(timeout 30 python scripts/generate_weekly.py --catch-up --lookback 0)"
     ]
   },
   "hooks": {
