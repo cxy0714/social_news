@@ -32,6 +32,12 @@ import urllib.request
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
+# Route GFW-blocked Western RSS feeds through the local proxy. Domestic hosts
+# (SJTU gateway, LLM relay, *.cn sources) stay direct. See proxy_setup.py.
+import proxy_setup
+
+proxy_setup.setup_proxy()
+
 # ── 源清单：(媒体名, 区域, RSS URL) ──────────────────────────────────────────
 # 这些都是公开 RSS。本地大多可直接取到；个别站点 RSS 可能失效，脚本会自动跳过并报告。
 FEEDS: list[tuple[str, str, str]] = [

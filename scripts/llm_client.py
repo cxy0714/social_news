@@ -167,7 +167,7 @@ def chat_json(system: str, user: str) -> dict:
     call = _PROVIDERS.get(provider)
     if call is None:
         raise LLMError(f"未知 LLM_PROVIDER: {provider!r}（应为 deepseek 或 claude）")
-    timeout = int(_env("LLM_TIMEOUT", "180") or "180")
+    timeout = int(_env("LLM_TIMEOUT", "300") or "300")
     attempts = int(_env("LLM_MAX_ATTEMPTS", "3") or "3")
     last_err: Exception | None = None
     for i in range(1, attempts + 1):

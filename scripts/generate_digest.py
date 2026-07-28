@@ -174,6 +174,67 @@ def collect_candidates(hours: int, max_items: int) -> tuple[list[dict], list[str
     return filter_window(all_items, max_items, hours=hours), unreachable
 
 
+RAW_REGIONS = ("北美", "欧洲", "亚太", "亚太/中东", "港澳台", "中国大陆", "其他")
+_RAW_HEAD = re.compile(r"^##\s+(?P<region>.+?)（\d+）\s*$")
+_RAW_ROW = re.compile(r"^- \[(?P<title>.+)\]\((?P<link>\S+)\) — `(?P<source>.+?)` · ")
+_RAW_BODY = re.compile(r"^\s+正文摘录[:：]\s*(?P<body>.*)$")
+
+
+def raw_path_for(date_str: str) -> Path:
+    return DIGESTS / f"_raw-{date_str}.md"
+
+
+def write_raw_candidates(items: list[dict], date_str: str, window_desc: str) -> Path:
+    """把某天筛好的候选（含抓来的正文摘录）写成 digests/_raw-DATE.md。
+
+    _raw 已 gitignore、只在本地私人电脑看，所以连正文摘录一并落盘，既是喂 LLM 的
+    完整上下文、也便于人工检视。**注意**：正式 digest（入库那份）仍绝不含正文——版权红
+    线只约束公开产物，本地私有中间文件不受此限。"""
+    by_region: dict[str, list[dict]] = {}
+    for it in items:
+        by_region.setdefault(it.get("region", "其他"), []).append(it)
+    lines = [f"# 新闻候选清单（原始）· {date_str}",
+             f"> 本地 RSS 抓取，{window_desc}，去重后共 {len(items)} 条（含公开正文摘录）。",
+             "> 中间产物：generate_digest.py 随后读本文件调 LLM 生成 digest；本地私有、不入库。", ""]
+    for region in RAW_REGIONS:
+        rows = by_region.get(region)
+        if not rows:
+            continue
+        lines.append(f"## {region}（{len(rows)}）")
+        for r in rows:
+            w = r.get("when")
+            ts = w.astimezone(BEIJING).strftime("%m-%d %H:%M") if w else "时间未知"
+            lines.append(f"- [{r['title']}]({r['link']}) — `{r['source']}` · {ts}")
+            body = (r.get("body") or "").strip()
+            if body:
+                lines.append(f"  正文摘录：{body}")
+        lines.append("")
+    path = raw_path_for(date_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def load_raw_candidates(path: Path) -> list[dict]:
+    """读回 _raw-DATE.md，重建候选 dict（title/link/source/region + 正文摘录）喂给 LLM。"""
+    items: list[dict] = []
+    region = "其他"
+    for line in path.read_text(encoding="utf-8").splitlines():
+        h = _RAW_HEAD.match(line)
+        if h:
+            region = h.group("region")
+            continue
+        m = _RAW_ROW.match(line)
+        if m:
+            items.append({"title": m.group("title"), "link": m.group("link"),
+                          "source": m.group("source"), "region": region, "body": ""})
+            continue
+        b = _RAW_BODY.match(line)
+        if b and items:
+            items[-1]["body"] = b.group("body").strip()
+    return items
+
+
 SYSTEM_PROMPT = """\
 你是一名严谨的新闻编辑，为「学习宏观经济学与社会学的中文读者」编写每日新闻摘要。
 你会收到一批候选新闻（标题 / 来源 / 地区 / 可能的公开正文摘录）。任务：
@@ -292,6 +353,16 @@ def update_readme(date_str: str) -> None:
     README.write_text(head + marker + new_body + footer, encoding="utf-8")
 
 
+def git_pull() -> None:
+    """补缺前先 pull --rebase：先同步其它机器/云端已补的 digest，再据此判断哪些天缺。"""
+    r = subprocess.run(["git", "pull", "--rebase", "--autostash"],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode == 0:
+        print("✅ 已 git pull --rebase（同步远端已补的 digest）")
+    else:
+        print(f"⚠ git pull 失败（按本地现状继续）：{r.stderr.strip() or r.stdout.strip()}")
+
+
 def git_commit_push(date_str: str, message: str | None = None,
                     paths: tuple[str, ...] = ("digests", "README.md")) -> None:
     """add 指定路径 → commit → pull --rebase → push。
@@ -364,15 +435,23 @@ def main() -> int:
 
 def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
                    hours: int, no_body: bool, out: str | None = None,
-                   update_index: bool = True) -> bool:
-    """产出一份 digest（调 LLM + 落盘 + 可选更新 README），不做 git。返回是否写成功。"""
+                   update_index: bool = True, window_desc: str | None = None) -> bool:
+    """产出一份 digest：先把候选写成 _raw-DATE.md 中间文件，再读回喂 LLM，落盘 digest。
+
+    两段式（先落盘候选清单、再由 LLM 读它生成）便于人工检视中间产物；_raw 已 gitignore。"""
     if not items:
         print(f"  ⚠ {date_str} 无候选，跳过。")
         return False
     if not no_body:
-        print("→ 抓取公开正文摘录（仅喂 LLM，不入库）…")
+        print("→ 抓取公开正文摘录（写进本地 _raw、喂 LLM；不入库）…")
         for it in items:
             it["body"] = fetch_body(it["link"])
+    raw = write_raw_candidates(items, date_str, window_desc or f"过去 {hours}h")
+    try:
+        print(f"→ 已写候选清单 {raw.relative_to(ROOT)}（{len(items)} 条，含正文），读回喂 LLM…")
+    except ValueError:
+        print(f"→ 已写候选清单 {raw}（{len(items)} 条，含正文），读回喂 LLM…")
+    items = load_raw_candidates(raw)
     print(f"→ 调用 LLM（{llm_client.model_label()}）分类去重+摘要（{date_str}）…")
     try:
         data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(items, date_str))
@@ -418,6 +497,8 @@ def missing_dates(lookback: int) -> list[dt.date]:
 
 def run_catch_up(args) -> int:
     """补缺：过去 lookback 天里缺的 digest 一次抓取、逐天补齐；今天缺则最后按 24h 生成。"""
+    if args.commit:
+        git_pull()  # 先同步远端/其它机器已补的 digest，再判断本地还缺哪些天
     today = dt.datetime.now(BEIJING).date()
     todo = missing_dates(args.lookback)
     if not todo:
@@ -431,10 +512,13 @@ def run_catch_up(args) -> int:
         ds = f"{d:%Y-%m-%d}"
         if d == today:
             items = filter_window(all_items, args.max_items, hours=args.hours)
+            wdesc = f"过去 {args.hours}h"
         else:
             items = filter_window(all_items, args.max_items, day=d)
+            wdesc = f"{ds} 北京日历日"
         print(f"  · {ds}：{len(items)} 条候选")
-        if produce_digest(items, unreachable, ds, hours=args.hours, no_body=args.no_body):
+        if produce_digest(items, unreachable, ds, hours=args.hours,
+                          no_body=args.no_body, window_desc=wdesc):
             wrote.append(ds)
     if not wrote:
         print("⚠ 补缺未产出任何 digest（往日 RSS 多已滚出窗口，属正常）。")
