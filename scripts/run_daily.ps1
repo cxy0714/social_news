@@ -13,7 +13,7 @@
 
 param(
     [int]$Hours = 24,
-    [int]$MaxItems = 120,
+    [int]$MaxItems = 360,
     [int]$Lookback = 3,
     [switch]$NoCommit
 )

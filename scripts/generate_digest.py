@@ -15,7 +15,7 @@ Claude 的 HTTP API（provider 见 .env）。守 instruction.md §2 版权红线
     python3 scripts/generate_digest.py --hours 48
     python3 scripts/generate_digest.py --commit        # 生成后 add/commit/push
     python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘
-    python3 scripts/generate_digest.py --max-items 100 # 喂给 LLM 的候选上限
+    python3 scripts/generate_digest.py --max-items 360 # 喂给 LLM 的候选上限（默认 360）
     python3 scripts/generate_digest.py --catch-up --commit          # 补过去 3 天缺的
     python3 scripts/generate_digest.py --catch-up --lookback 5      # 补过去 5 天缺的
 
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import subprocess
 import sys
@@ -134,8 +135,9 @@ def fetch_all_feeds() -> tuple[list[dict], list[str]]:
 
 
 def filter_window(all_items: list[dict], max_items: int, *,
-                  hours: int | None = None, day: dt.date | None = None) -> list[dict]:
-    """从全量条目筛一个时间窗，去重、截断。
+                  hours: int | None = None, day: dt.date | None = None,
+                  mainland_reserve: int = 30) -> list[dict]:
+    """从全量条目筛一个时间窗、去重并作地域均衡后截断。
 
     hours: 过去 N 小时（相对现在，用于「今天」）；
     day:   某北京日历日 [D 00:00, D+1 00:00) 北京时间（用于补往日）。
@@ -148,7 +150,7 @@ def filter_window(all_items: list[dict], max_items: int, *,
         lo = start.astimezone(dt.timezone.utc)
         hi = (start + dt.timedelta(days=1)).astimezone(dt.timezone.utc)
     seen: set[str] = set()
-    out: list[dict] = []
+    eligible: list[dict] = []
     for it in all_items:
         when = it.get("when")
         if lo is not None or hi is not None:
@@ -164,8 +166,19 @@ def filter_window(all_items: list[dict], max_items: int, *,
         if not key or key in seen:
             continue
         seen.add(key)
-        out.append(it)
-    return out[:max_items]
+        eligible.append(it)
+
+    # RSS 的抓取顺序跟 FEEDS 一致；中国大陆源排在末尾，直接 out[:max_items]
+    # 会在高产的欧美源填满上限后把它们全部丢掉。按时间排序，并预留大陆候选位，
+    # 让“上限”控制成本而不意外变成地域过滤器。若大陆当日不足，空位自动让给其他源。
+    epoch = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    eligible.sort(key=lambda it: it.get("when") or epoch, reverse=True)
+    reserve = min(max(mainland_reserve, 0), max_items)
+    mainland = [it for it in eligible if it.get("region") == "中国大陆"][:reserve]
+    selected_keys = {fetch_news.norm_title(it["title"]) for it in mainland}
+    others = [it for it in eligible
+              if fetch_news.norm_title(it["title"]) not in selected_keys]
+    return mainland + others[:max_items - len(mainland)]
 
 
 def collect_candidates(hours: int, max_items: int) -> tuple[list[dict], list[str]]:
@@ -398,13 +411,15 @@ def git_commit_push(date_str: str, message: str | None = None,
 def main() -> int:
     ap = argparse.ArgumentParser(description="本地 API 版每日 digest 生成")
     ap.add_argument("--hours", type=int, default=24, help="RSS 回溯窗口（默认 24）")
-    ap.add_argument("--max-items", type=int, default=120, help="喂给 LLM 的候选上限")
+    ap.add_argument("--max-items", type=int, default=360, help="喂给 LLM 的候选上限")
     ap.add_argument("--date", default=None, help="覆盖日期 YYYY-MM-DD（默认今天北京时间）")
     ap.add_argument("--commit", action="store_true", help="生成后 git add/commit/push")
     ap.add_argument("--dry-run", action="store_true", help="只抓候选，不调 LLM、不落盘")
     ap.add_argument("--no-body", action="store_true", help="不抓正文，仅用标题分类摘要")
-    ap.add_argument("--provider", choices=["deepseek", "claude"], default=None,
-                    help="覆盖 .env 的 LLM_PROVIDER（本次运行用哪个模型）")
+    ap.add_argument("--refresh-raw", action="store_true",
+                    help="忽略已有 _raw 候选缓存，重新抓取并覆盖它")
+    ap.add_argument("--provider", choices=["deepseek", "gpt", "claude"], default=None,
+                    help="本次只使用指定 provider，覆盖 LLM_PROVIDERS fallback 链")
     ap.add_argument("--out", default=None, help="覆盖输出路径（默认 digests/YYYY-MM-DD.md）")
     ap.add_argument("--catch-up", action="store_true",
                     help="补缺模式：过去 --lookback 天里缺的 digest 逐天补齐（含今天）")
@@ -414,15 +429,27 @@ def main() -> int:
 
     llm_client.load_dotenv()
     if args.provider:
-        import os
-        os.environ["LLM_PROVIDER"] = args.provider
+        produce_digest._providers = [args.provider]
 
     if args.catch_up:
         return run_catch_up(args)
 
-    date_str = args.date or dt.datetime.now(BEIJING).strftime("%Y-%m-%d")
-    print(f"→ 抓取 RSS 候选（过去 {args.hours}h）…")
-    items, unreachable = collect_candidates(args.hours, args.max_items)
+    today = dt.datetime.now(BEIJING).date()
+    date_str = args.date or f"{today:%Y-%m-%d}"
+    try:
+        target_date = dt.date.fromisoformat(date_str)
+    except ValueError:
+        ap.error("--date 必须是 YYYY-MM-DD")
+
+    if target_date == today:
+        print(f"→ 抓取 RSS 候选（过去 {args.hours}h）…")
+        items, unreachable = collect_candidates(args.hours, args.max_items)
+        window_desc = f"过去 {args.hours}h"
+    else:
+        print(f"→ 抓取 RSS 候选（{date_str} 北京日历日）…")
+        all_items, unreachable = fetch_all_feeds()
+        items = filter_window(all_items, args.max_items, day=target_date)
+        window_desc = f"{date_str} 北京日历日"
     print(f"  候选 {len(items)} 条；不可达源 {len(unreachable)} 个：{', '.join(unreachable) or '无'}")
 
     if args.dry_run:
@@ -430,33 +457,52 @@ def main() -> int:
             print(f"  - [{it['source']}] {it['title']}")
         print(f"\n(dry-run) 共 {len(items)} 条候选，未调 LLM。")
         return 0
-    return _generate(args, items, unreachable, date_str)
+    return _generate(args, items, unreachable, date_str, window_desc=window_desc)
 
 
 def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
                    hours: int, no_body: bool, out: str | None = None,
-                   update_index: bool = True, window_desc: str | None = None) -> bool:
+                   update_index: bool = True, window_desc: str | None = None,
+                   refresh_raw: bool = False) -> bool:
     """产出一份 digest：先把候选写成 _raw-DATE.md 中间文件，再读回喂 LLM，落盘 digest。
 
     两段式（先落盘候选清单、再由 LLM 读它生成）便于人工检视中间产物；_raw 已 gitignore。"""
-    if not items:
-        print(f"  ⚠ {date_str} 无候选，跳过。")
-        return False
-    if not no_body:
-        print("→ 抓取公开正文摘录（写进本地 _raw、喂 LLM；不入库）…")
-        for it in items:
-            it["body"] = fetch_body(it["link"])
-    raw = write_raw_candidates(items, date_str, window_desc or f"过去 {hours}h")
+    raw = raw_path_for(date_str)
+    if raw.exists() and not refresh_raw:
+        print(f"→ 复用已有候选清单 {raw.relative_to(ROOT)}（支持切换 provider 重试）")
+    else:
+        if not items:
+            print(f"  ⚠ {date_str} 无候选，跳过。")
+            return False
+        if not no_body:
+            print("→ 抓取公开正文摘录（写进本地 _raw、喂 LLM；不入库）…")
+            for it in items:
+                it["body"] = fetch_body(it["link"])
+        raw = write_raw_candidates(items, date_str, window_desc or f"过去 {hours}h")
     try:
         print(f"→ 已写候选清单 {raw.relative_to(ROOT)}（{len(items)} 条，含正文），读回喂 LLM…")
     except ValueError:
         print(f"→ 已写候选清单 {raw}（{len(items)} 条，含正文），读回喂 LLM…")
     items = load_raw_candidates(raw)
-    print(f"→ 调用 LLM（{llm_client.model_label()}）分类去重+摘要（{date_str}）…")
-    try:
-        data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(items, date_str))
-    except llm_client.LLMError as e:
-        print(f"✗ {e}")
+    providers = getattr(produce_digest, "_providers", None)
+    if not providers:
+        # 默认按容灾顺序全试一遍；LLM_PROVIDERS 可自定义顺序/子集。
+        providers = [p.strip().lower() for p in os.environ.get(
+            "LLM_PROVIDERS", "claude,gpt,deepseek"
+        ).split(",") if p.strip()]
+    data = None
+    last_error = None
+    for provider in providers:
+        os.environ["LLM_PROVIDER"] = provider
+        print(f"→ 调用 LLM（{llm_client.model_label()}）分类去重+摘要（{date_str}）…")
+        try:
+            data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(items, date_str))
+            break
+        except llm_client.LLMError as e:
+            last_error = e
+            print(f"✗ {provider} 失败，尝试下一个 provider：{e}")
+    if data is None:
+        print(f"✗ 所有 provider 均失败：{last_error}")
         return False
     md = render_digest(data, date_str, len(items), hours, unreachable)
     out_path = Path(out) if out else DIGESTS / f"{date_str}.md"
@@ -472,9 +518,11 @@ def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
     return True
 
 
-def _generate(args, items: list[dict], unreachable: list[str], date_str: str) -> int:
+def _generate(args, items: list[dict], unreachable: list[str], date_str: str, *,
+              window_desc: str | None = None) -> int:
     ok = produce_digest(items, unreachable, date_str, hours=args.hours,
-                        no_body=args.no_body, out=args.out)
+                        no_body=args.no_body, out=args.out,
+                        refresh_raw=args.refresh_raw, window_desc=window_desc)
     if not ok:
         return 1
     if args.commit:

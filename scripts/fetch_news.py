@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import sys
 import time
@@ -63,7 +64,7 @@ FEEDS: list[tuple[str, str, str]] = [
 
 UA = ("Mozilla/5.0 (compatible; SocialNewsDigest/1.0; +https://github.com/) "
       "Python-urllib news-digest")
-TIMEOUT = 15          # 单源超时（秒）
+TIMEOUT = int(os.environ.get("RSS_TIMEOUT", "15"))  # 单源超时（秒）
 POLITE_DELAY = 1.0    # 源之间间隔（秒），礼貌爬取
 
 

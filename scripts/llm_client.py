@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """LLM provider 抽象层（零第三方依赖，仅标准库）。
 
-一个环境变量 LLM_PROVIDER 切换整套后端：
+环境变量 LLM_PROVIDER（单 provider）或 LLM_PROVIDERS（按顺序的 fallback 链）切换后端：
 - deepseek —— OpenAI 兼容的 /chat/completions（官方 api.deepseek.com 或交大网关）
 - claude   —— Anthropic 官方 /v1/messages
+- gpt      —— OpenAI 兼容的 /chat/completions（可接 RightAPI 等中转站）
 
 对外只暴露一个函数：chat_json(system, user) -> dict。
 它要求模型返回**严格 JSON**，解析失败会重试；两家 API 的差异都封在内部。
@@ -98,6 +99,39 @@ def _call_deepseek(system: str, user: str, timeout: int) -> str:
     return resp["choices"][0]["message"]["content"]
 
 
+def _call_openai_compatible(prefix: str, system: str, user: str, timeout: int) -> str:
+    """调用 OpenAI 兼容网关。prefix 为环境变量前缀（如 GPT）。"""
+    base = _env(f"{prefix}_API_BASE").rstrip("/")
+    key = _env(f"{prefix}_API_KEY")
+    model = _env(f"{prefix}_MODEL")
+    if not base:
+        raise LLMError(f"缺少 {prefix}_API_BASE（检查 .env）")
+    if not key:
+        raise LLMError(f"缺少 {prefix}_API_KEY（检查 .env）")
+    if not model:
+        raise LLMError(f"缺少 {prefix}_MODEL（检查 .env）")
+    url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+               "User-Agent": UA}
+    payload = {"model": model,
+               "messages": [{"role": "system", "content": system},
+                            {"role": "user", "content": user}],
+               "temperature": 0.3,
+               "response_format": {"type": "json_object"}, "stream": False}
+    resp = _post(url, headers, payload, timeout)
+    return resp["choices"][0]["message"]["content"]
+
+
+def _call_gpt(system: str, user: str, timeout: int) -> str:
+    """调用 GPT 的 OpenAI 兼容中转接口（例如 RightAPI）。"""
+    # RightAPI 的 Claude/Codex 上游可共用同一把 key；显式 GPT_* 配置优先。
+    os.environ.setdefault("GPT_API_BASE", "https://www.rightapi.ai/codex/v1")
+    os.environ.setdefault("GPT_MODEL", "gpt-5.6-luna")
+    if not _env("GPT_API_KEY") and _env("ANTHROPIC_API_KEY"):
+        os.environ["GPT_API_KEY"] = _env("ANTHROPIC_API_KEY")
+    return _call_openai_compatible("GPT", system, user, timeout)
+
+
 def _call_claude(system: str, user: str, timeout: int) -> str:
     """Anthropic 官方 /v1/messages。"""
     base = _env("ANTHROPIC_API_BASE", "https://api.anthropic.com").rstrip("/")
@@ -146,7 +180,7 @@ def _stream_claude(url: str, headers: dict, payload: dict, timeout: int) -> str:
     return "".join(chunks)
 
 
-_PROVIDERS = {"deepseek": _call_deepseek, "claude": _call_claude}
+_PROVIDERS = {"deepseek": _call_deepseek, "claude": _call_claude, "gpt": _call_gpt}
 
 
 def provider_name() -> str:
@@ -158,6 +192,8 @@ def model_label() -> str:
     p = provider_name()
     if p == "claude":
         return f"claude:{_env('ANTHROPIC_MODEL', 'claude-opus-4-8')}"
+    if p == "gpt":
+        return f"gpt:{_env('GPT_MODEL', '未配置')}"
     return f"deepseek:{_env('DEEPSEEK_MODEL', 'deepseek-chat')}"
 
 
@@ -166,7 +202,7 @@ def chat_json(system: str, user: str) -> dict:
     provider = provider_name()
     call = _PROVIDERS.get(provider)
     if call is None:
-        raise LLMError(f"未知 LLM_PROVIDER: {provider!r}（应为 deepseek 或 claude）")
+        raise LLMError(f"未知 LLM_PROVIDER: {provider!r}（应为 deepseek、gpt 或 claude）")
     timeout = int(_env("LLM_TIMEOUT", "300") or "300")
     attempts = int(_env("LLM_MAX_ATTEMPTS", "3") or "3")
     last_err: Exception | None = None

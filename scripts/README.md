@@ -84,9 +84,12 @@ python3 scripts/fetch_guardian.py --out digests/_raw-guardian-2026-06-30.md
 与云端 Claude 本体模式并存的**第三种执行方式**：在你自己的电脑上，用脚本一条龙跑完
 「RSS 抓候选 → 抓公开正文喂 LLM → LLM 分类去重+中文摘要 → 写 `digests/YYYY-MM-DD.md`
 + 更新 README → 可选 commit/push」。LLM 后端可在 **DeepSeek**（默认，官方或交大网关）
-和 **Claude**（Anthropic 官方 API）之间切换。**仅标准库**（`urllib` + `html.parser`）。
+和 **Claude**（Anthropic 官方 API）之间切换。也支持 OpenAI 兼容的 **GPT** 中转接口（如
+RightAPI）。**仅标准库**（`urllib` + `html.parser`）。
 
-**一次性配置**：把根目录 `.env.example` 复制为 `.env`，填 provider 与 key：
+**一次性配置**：把根目录 `.env.example` 复制为 `.env`，填 provider 与 key。GPT 中转站需
+配置 `GPT_API_BASE=https://www.rightapi.ai/codex/v1`、`GPT_API_KEY`、
+`GPT_MODEL=gpt-5.6-luna`：
 
 ```bash
 cp .env.example .env      # 然后编辑：LLM_PROVIDER / *_API_KEY / *_MODEL
@@ -100,8 +103,13 @@ python3 scripts/generate_digest.py --hours 48
 python3 scripts/generate_digest.py --commit        # 生成后自动 add/commit/push
 python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘（省钱自检）
 python3 scripts/generate_digest.py --no-body       # 不抓正文，仅用标题（更快更省 token）
-python3 scripts/generate_digest.py --max-items 100 # 喂给 LLM 的候选上限
+python3 scripts/generate_digest.py --max-items 360 # 喂给 LLM 的候选上限（默认 360）
+python3 scripts/generate_digest.py --provider gpt  # 本次只用 GPT
 ```
+
+默认会在同一个 `_raw-YYYY-MM-DD.md` 候选清单上按 `claude → gpt → deepseek` 依次尝试，
+某个接口失败会自动切换下一个；也可用 `LLM_PROVIDERS=deepseek,gpt` 自定义顺序和范围。
+已有 `_raw-日期.md` 时会直接复用，不重复抓取正文，适合上次某个模型失败后重跑。
 
 ### 版权红线（同 instruction.md §2）
 - 抓来的正文**只在内存里喂给 LLM 做理解**，产出仍是原创中文摘要(≤50字)+链接，
@@ -167,6 +175,6 @@ python3 scripts/generate_weekly.py --catch-up --commit   # 补已完结但缺的
   跑在本地而非云端。
 
 ### llm_client.py
-provider 抽象层：`chat_json(system, user) -> dict`，内部封装 DeepSeek（OpenAI 兼容
+provider 抽象层：`chat_json(system, user) -> dict`，内部封装 DeepSeek/GPT（OpenAI 兼容
 `/chat/completions`）与 Claude（`/v1/messages`）的差异，带超时/重试/JSON 抽取；另含极简
-`load_dotenv()`。切 provider 只改 `.env` 里的 `LLM_PROVIDER`，脚本无需改动。
+`load_dotenv()`。
