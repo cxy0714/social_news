@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """本地 API 版·端到端生成每日 digest（零第三方依赖）。
 
-流水线：RSS 抓候选 → 抓公开正文（喂 LLM 用，不入库）→ LLM 分类去重+中文摘要
+流水线：RSS / 公开列表页抓候选 → 抓公开正文（喂 LLM 用，不入库）→ LLM 分类去重+中文摘要
 → 渲染成 instruction.md §3 模板 → 写 digests/YYYY-MM-DD.md + 更新 README →
 可选 git commit & push。
 
@@ -15,7 +15,7 @@ Claude 的 HTTP API（provider 见 .env）。守 instruction.md §2 版权红线
     python3 scripts/generate_digest.py --hours 48
     python3 scripts/generate_digest.py --commit        # 生成后 add/commit/push
     python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘
-    python3 scripts/generate_digest.py --max-items 360 # 喂给 LLM 的候选上限（默认 360）
+    python3 scripts/generate_digest.py --max-items 600 # 喂给 LLM 的候选上限（默认 600）
     python3 scripts/generate_digest.py --catch-up --commit          # 补过去 3 天缺的
     python3 scripts/generate_digest.py --catch-up --lookback 5      # 补过去 5 天缺的
 
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import math
 import os
 import re
 import subprocess
@@ -38,8 +39,12 @@ import urllib.error
 from html.parser import HTMLParser
 from pathlib import Path
 
-import fetch_news
-import llm_client
+try:
+    from . import fetch_news
+    from . import llm_client
+except ImportError:  # 直接作为脚本运行时，回退到同目录导入
+    import fetch_news
+    import llm_client
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -116,27 +121,32 @@ def fetch_body(url: str, limit: int = 600) -> str:
 
 
 def fetch_all_feeds() -> tuple[list[dict], list[str]]:
-    """跑一遍所有 RSS，返回全部条目（标注 source/region，保留 when）+ 不可达来源名。
+    """跑一遍所有 RSS / 公开列表页，返回全部条目（标注 source/region，保留 when）+ 不可达来源名。
 
     不做时间过滤 / 去重 / 截断——交给 filter_window。补缺时可一次抓取、多天复用。"""
     items: list[dict] = []
     unreachable: list[str] = []
-    for name, region, url in fetch_news.FEEDS:
+    for spec in fetch_news.iter_sources():
         try:
-            raw = fetch_news.fetch(url)
-            found = fetch_news.extract_items(raw)
+            if spec.kind == "rss":
+                raw = fetch_news.fetch(spec.url)
+                found = fetch_news.extract_items(raw)
+            else:
+                html_text = fetch_news.fetch_text(spec.url)
+                parser = spec.parser or (lambda _html, _url: [])
+                found = parser(html_text, spec.url)
         except Exception:  # noqa: BLE001
-            unreachable.append(name)
+            unreachable.append(spec.name)
             continue
         for it in found:
-            it["source"], it["region"] = name, region
+            it["source"], it["region"] = spec.name, spec.region
             items.append(it)
     return items, unreachable
 
 
 def filter_window(all_items: list[dict], max_items: int, *,
                   hours: int | None = None, day: dt.date | None = None,
-                  mainland_reserve: int = 30) -> list[dict]:
+                  china_reserve_ratio: float = 0.45) -> list[dict]:
     """从全量条目筛一个时间窗、去重并作地域均衡后截断。
 
     hours: 过去 N 小时（相对现在，用于「今天」）；
@@ -168,17 +178,17 @@ def filter_window(all_items: list[dict], max_items: int, *,
         seen.add(key)
         eligible.append(it)
 
-    # RSS 的抓取顺序跟 FEEDS 一致；中国大陆源排在末尾，直接 out[:max_items]
-    # 会在高产的欧美源填满上限后把它们全部丢掉。按时间排序，并预留大陆候选位，
-    # 让“上限”控制成本而不意外变成地域过滤器。若大陆当日不足，空位自动让给其他源。
+    # 抓取顺序不应把中国大陆 / 港澳台候选挤掉。按时间排序后，先预留这两类的名额，
+    # 让“上限”控制成本而不意外变成地域过滤器。若当日不足，空位自动让给其他源。
     epoch = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
     eligible.sort(key=lambda it: it.get("when") or epoch, reverse=True)
-    reserve = min(max(mainland_reserve, 0), max_items)
-    mainland = [it for it in eligible if it.get("region") == "中国大陆"][:reserve]
-    selected_keys = {fetch_news.norm_title(it["title"]) for it in mainland}
+    china_regions = {"中国大陆", "港澳台"}
+    reserve = min(max(math.ceil(max_items * max(china_reserve_ratio, 0.0)), 0), max_items)
+    china = [it for it in eligible if it.get("region") in china_regions][:reserve]
+    selected_keys = {fetch_news.norm_title(it["title"]) for it in china}
     others = [it for it in eligible
               if fetch_news.norm_title(it["title"]) not in selected_keys]
-    return mainland + others[:max_items - len(mainland)]
+    return china + others[:max_items - len(china)]
 
 
 def collect_candidates(hours: int, max_items: int) -> tuple[list[dict], list[str]]:
@@ -207,7 +217,7 @@ def write_raw_candidates(items: list[dict], date_str: str, window_desc: str) -> 
     for it in items:
         by_region.setdefault(it.get("region", "其他"), []).append(it)
     lines = [f"# 新闻候选清单（原始）· {date_str}",
-             f"> 本地 RSS 抓取，{window_desc}，去重后共 {len(items)} 条（含公开正文摘录）。",
+             f"> 本地 RSS / 公开列表页抓取，{window_desc}，去重后共 {len(items)} 条（含公开正文摘录）。",
              "> 中间产物：generate_digest.py 随后读本文件调 LLM 生成 digest；本地私有、不入库。", ""]
     for region in RAW_REGIONS:
         rows = by_region.get(region)
@@ -321,7 +331,7 @@ def render_digest(data: dict, date_str: str, kept: int, hours: int,
     out = [f"# 每日新闻摘要 · {date_str}",
            f"> 生成时间：{date_str}（北京时间）",
            "> 类型：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发",
-           f"> 采集方式：本地 `scripts/generate_digest.py` 抓公开 RSS（过去约 {hours} "
+           f"> 采集方式：本地 `scripts/generate_digest.py` 抓公开 RSS / 公开列表页（过去约 {hours} "
            f"小时，{kept} 条候选），由 {label} 分类去重+中文摘要。抓来的正文仅用于理解，"
            "未复制入库。", "", render_body(data), "", "---",
            "_说明：摘要均为原创概述并附原文链接，未复制原文。同一事件合并为一条并列"
@@ -411,7 +421,7 @@ def git_commit_push(date_str: str, message: str | None = None,
 def main() -> int:
     ap = argparse.ArgumentParser(description="本地 API 版每日 digest 生成")
     ap.add_argument("--hours", type=int, default=24, help="RSS 回溯窗口（默认 24）")
-    ap.add_argument("--max-items", type=int, default=360, help="喂给 LLM 的候选上限")
+    ap.add_argument("--max-items", type=int, default=600, help="喂给 LLM 的候选上限")
     ap.add_argument("--date", default=None, help="覆盖日期 YYYY-MM-DD（默认今天北京时间）")
     ap.add_argument("--commit", action="store_true", help="生成后 git add/commit/push")
     ap.add_argument("--dry-run", action="store_true", help="只抓候选，不调 LLM、不落盘")
@@ -442,11 +452,11 @@ def main() -> int:
         ap.error("--date 必须是 YYYY-MM-DD")
 
     if target_date == today:
-        print(f"→ 抓取 RSS 候选（过去 {args.hours}h）…")
+        print(f"→ 抓取 RSS / 公开列表页候选（过去 {args.hours}h）…")
         items, unreachable = collect_candidates(args.hours, args.max_items)
         window_desc = f"过去 {args.hours}h"
     else:
-        print(f"→ 抓取 RSS 候选（{date_str} 北京日历日）…")
+        print(f"→ 抓取 RSS / 公开列表页候选（{date_str} 北京日历日）…")
         all_items, unreachable = fetch_all_feeds()
         items = filter_window(all_items, args.max_items, day=target_date)
         window_desc = f"{date_str} 北京日历日"
@@ -552,7 +562,7 @@ def run_catch_up(args) -> int:
     if not todo:
         print(f"✓ 过去 {args.lookback} 天 digest 齐全，无需补缺。")
         return 0
-    print(f"→ 缺 {len(todo)} 天：{', '.join(f'{d:%m-%d}' for d in todo)}；抓取 RSS 全量…")
+    print(f"→ 缺 {len(todo)} 天：{', '.join(f'{d:%m-%d}' for d in todo)}；抓取 RSS / 公开列表页全量…")
     all_items, unreachable = fetch_all_feeds()
     print(f"  抓到 {len(all_items)} 条；不可达源 {len(unreachable)} 个：{', '.join(unreachable) or '无'}")
     wrote: list[str] = []

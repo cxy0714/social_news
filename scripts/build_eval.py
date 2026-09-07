@@ -3,7 +3,7 @@
 
 设计（用户选择：复用现有 DeepSeek 版）：
 - DeepSeek 方：直接复用已生成的 `digests/YYYY-MM-DD.md` 正文（不重跑，省一次调用）。
-- Claude   方：用 generate_digest 的流水线现抓 RSS+正文、调 Claude 生成正文。
+- Claude   方：用 generate_digest 的流水线现抓 RSS / 公开列表页 + 正文、调 Claude 生成正文。
   注意：候选来自当次 RSS，可能与 DeepSeek 那次不完全一致（可接受的对比误差）。
 
 产出 `evals/YYYY-MM-DD.md` 是入库 markdown（唯一事实来源），网页层 web/build.py
@@ -26,8 +26,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import generate_digest as gd
-import llm_client
+try:
+    from . import generate_digest as gd
+    from . import llm_client
+except ImportError:  # 直接作为脚本运行时，回退到同目录导入
+    import generate_digest as gd
+    import llm_client
 
 for _s in (sys.stdout, sys.stderr):
     try:

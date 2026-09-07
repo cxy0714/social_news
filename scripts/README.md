@@ -2,9 +2,9 @@
 
 > 用于在**你自己的电脑**上跑（本地网络无云端出口限制），补足云端定时任务抓不到的源。
 
-## fetch_news.py — RSS 新闻抓取
+## fetch_news.py — RSS / 公开列表页新闻抓取
 
-巡视主流媒体公开 RSS，筛选过去 N 小时条目、去重，生成「原始候选清单」markdown。
+巡视主流媒体公开 RSS / 公开列表页，筛选过去 N 小时条目、去重，生成「原始候选清单」markdown。
 **只用 Python 标准库，无需 pip 安装任何东西**（Python 3.9+）。
 
 ```bash
@@ -23,7 +23,7 @@ python3 scripts/fetch_news.py --out /tmp/news.md
 ### 工作流（推荐）
 
 ```
-本地: python3 scripts/fetch_news.py        # 抓 RSS → 候选清单
+本地: python3 scripts/fetch_news.py        # 抓 RSS / 公开列表页 → 候选清单
   ↓
 Claude Code: 「读 digests/_raw-今天.md，做五类分类+中文摘要，写成 digests/今天.md 并 commit」
 ```
@@ -32,13 +32,13 @@ Claude Code: 「读 digests/_raw-今天.md，做五类分类+中文摘要，写�
 **分类与中文摘要交给 Claude**，质量更好也更省事。
 
 ### 设计原则
-- 只用公开 RSS，只取标题/链接/时间/来源，不抓正文全文（版权红线）。
+- 只用公开 RSS / 公开列表页，只取标题/链接/时间/来源，不抓正文全文（版权红线）。
 - 带浏览器 UA、超时、源间隔；失败源自动跳过并在报告中标注。
 - 不解析复杂 HTML、不绕过付费墙、不对抗反爬。
 
 ### 增删源
-编辑 `fetch_news.py` 顶部的 `FEEDS` 列表，按 `(媒体名, 区域, RSS_URL)` 增删即可。
-没有 RSS 的站点（很多大陆媒体、付费墙站）暂不在本脚本范围内。
+编辑 `fetch_news.py` 顶部的 `FEEDS`（RSS）和公开列表页配置，按 `(媒体名, 区域, URL)` 增删即可。
+没有 RSS 但有公开列表页的站点，也可以按同样方式接入。
 
 ### 备注
 `digests/_raw-*.md` 是本地中间产物，已在 `.gitignore` 中忽略，不会污染仓库。
@@ -82,7 +82,7 @@ python3 scripts/fetch_guardian.py --out digests/_raw-guardian-2026-06-30.md
 ## generate_digest.py — 本地 API 版·端到端生成 digest
 
 与云端 Claude 本体模式并存的**第三种执行方式**：在你自己的电脑上，用脚本一条龙跑完
-「RSS 抓候选 → 抓公开正文喂 LLM → LLM 分类去重+中文摘要 → 写 `digests/YYYY-MM-DD.md`
+「RSS / 公开列表页抓候选 → 抓公开正文喂 LLM → LLM 分类去重+中文摘要 → 写 `digests/YYYY-MM-DD.md`
 + 更新 README → 可选 commit/push」。LLM 后端可在 **DeepSeek**（默认，官方或交大网关）
 和 **Claude**（Anthropic 官方 API）之间切换。也支持 OpenAI 兼容的 **GPT** 中转接口（如
 RightAPI）。**仅标准库**（`urllib` + `html.parser`）。
@@ -103,7 +103,7 @@ python3 scripts/generate_digest.py --hours 48
 python3 scripts/generate_digest.py --commit        # 生成后自动 add/commit/push
 python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘（省钱自检）
 python3 scripts/generate_digest.py --no-body       # 不抓正文，仅用标题（更快更省 token）
-python3 scripts/generate_digest.py --max-items 360 # 喂给 LLM 的候选上限（默认 360）
+python3 scripts/generate_digest.py --max-items 600 # 喂给 LLM 的候选上限（默认 600）
 python3 scripts/generate_digest.py --provider gpt  # 本次只用 GPT
 ```
 
