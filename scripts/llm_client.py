@@ -2,12 +2,14 @@
 """LLM provider 抽象层（零第三方依赖，仅标准库）。
 
 环境变量 LLM_PROVIDER（单 provider）或 LLM_PROVIDERS（按顺序的 fallback 链）切换后端：
-- deepseek —— OpenAI 兼容的 /chat/completions（官方 api.deepseek.com 或交大网关）
-- claude   —— Anthropic 官方 /v1/messages
-- gpt      —— OpenAI 兼容的 /chat/completions（可接 RightAPI 等中转站）
+- deepseek          —— OpenAI 兼容的 /chat/completions，端点由 DEEPSEEK_API_BASE 决定
+                       （默认主用交大网关 https://models.sjtu.edu.cn/api/v1）
+- deepseek-official —— 同一套协议，走 DeepSeek 官方 api.deepseek.com（备用，DEEPSEEK_OFFICIAL_*）
+- claude            —— Anthropic 官方 /v1/messages
+- gpt               —— OpenAI 兼容的 /chat/completions（可接 RightAPI 等中转站）
 
-对外只暴露一个函数：chat_json(system, user) -> dict。
-它要求模型返回**严格 JSON**，解析失败会重试；两家 API 的差异都封在内部。
+对外只暴露一个函数：chat_json(system, user, providers=None) -> dict。
+它要求模型返回**严格 JSON**，解析失败会重试；多家 API 的差异都封在内部。
 
 环境变量见仓库根目录 .env.example。本模块也顺带提供 load_dotenv()，
 让脚本无需第三方库即可读取 .env。
@@ -99,6 +101,16 @@ def _call_deepseek(system: str, user: str, timeout: int) -> str:
     return resp["choices"][0]["message"]["content"]
 
 
+def _call_deepseek_official(system: str, user: str, timeout: int) -> str:
+    """DeepSeek 官方 API（备用）。协议与 _call_deepseek 完全一致，只是另一套端点配置。
+
+    与 DEEPSEEK_*（主用，本机指向交大网关）分开命名，才能在 LLM_PROVIDERS 里
+    同时挂上「校园网关 + 官方 API」两条腿。"""
+    os.environ.setdefault("DEEPSEEK_OFFICIAL_API_BASE", "https://api.deepseek.com")
+    os.environ.setdefault("DEEPSEEK_OFFICIAL_MODEL", "deepseek-flash")
+    return _call_openai_compatible("DEEPSEEK_OFFICIAL", system, user, timeout)
+
+
 def _call_openai_compatible(prefix: str, system: str, user: str, timeout: int) -> str:
     """调用 OpenAI 兼容网关。prefix 为环境变量前缀（如 GPT）。"""
     base = _env(f"{prefix}_API_BASE").rstrip("/")
@@ -180,38 +192,122 @@ def _stream_claude(url: str, headers: dict, payload: dict, timeout: int) -> str:
     return "".join(chunks)
 
 
-_PROVIDERS = {"deepseek": _call_deepseek, "claude": _call_claude, "gpt": _call_gpt}
+_PROVIDERS = {
+    "deepseek": _call_deepseek,
+    "deepseek-official": _call_deepseek_official,
+    "claude": _call_claude,
+    "gpt": _call_gpt,
+}
+
+# provider → 读取 key 的环境变量前缀（"未配置就跳过" 的判断依据）。
+_PROVIDER_KEY_PREFIX = {
+    "deepseek": "DEEPSEEK",
+    "deepseek-official": "DEEPSEEK_OFFICIAL",
+    "claude": "ANTHROPIC",
+    "gpt": "GPT",
+}
+
+# .env.example 里的占位符：视同没填，免得拿假 key 打一次必然 401 的请求。
+_PLACEHOLDER = re.compile(r"replace[-_]?me|your[-_]?key", re.IGNORECASE)
+
+
+def _has_key(name: str) -> bool:
+    value = _env(name)
+    return bool(value) and not _PLACEHOLDER.search(value)
 
 
 def provider_name() -> str:
     return _env("LLM_PROVIDER", "deepseek").lower()
 
 
-def model_label() -> str:
-    """当前 provider + 模型名，用于日志和 digest 采集说明。"""
-    p = provider_name()
+def provider_chain() -> list[str]:
+    """容灾链：LLM_PROVIDERS（逗号分隔，按顺序降级）优先，否则退化为单个 LLM_PROVIDER。"""
+    raw = _env("LLM_PROVIDERS")
+    chain = [p.strip().lower() for p in raw.split(",") if p.strip()] if raw else []
+    return chain or [provider_name()]
+
+
+def provider_configured(provider: str) -> bool:
+    """该 provider 的 key 是否已就绪（链上没配 key 的会被跳过，而不是报错中断）。"""
+    p = (provider or "").lower()
+    if p == "gpt":
+        # RightAPI 的 Claude/Codex 上游可共用同一把 key。
+        return _has_key("GPT_API_KEY") or _has_key("ANTHROPIC_API_KEY")
+    prefix = _PROVIDER_KEY_PREFIX.get(p)
+    return bool(prefix) and _has_key(f"{prefix}_API_KEY")
+
+
+def _base_gateway() -> str:
+    """主 DeepSeek 端点的简称：交大网关 → sjtu，官方 → official，其它中转站 → 主机名。"""
+    host = re.sub(r"^https?://", "", _env("DEEPSEEK_API_BASE", "https://api.deepseek.com"))
+    host = host.split("/")[0].split(":")[0].lower()
+    if not host:
+        return "unknown"
+    if "sjtu" in host:
+        return "sjtu"
+    if "deepseek" in host:
+        return "official"
+    return host
+
+
+def provider_label(provider: str) -> str:
+    """provider + 模型名 + 实际端点，用于日志和 digest 采集说明（如 deepseek@sjtu:deepseek-chat）。"""
+    p = (provider or "").lower()
+    if p == "deepseek":
+        return f"deepseek@{_base_gateway()}:{_env('DEEPSEEK_MODEL', 'deepseek-chat')}"
+    if p == "deepseek-official":
+        return f"deepseek@official:{_env('DEEPSEEK_OFFICIAL_MODEL', 'deepseek-flash')}"
     if p == "claude":
         return f"claude:{_env('ANTHROPIC_MODEL', 'claude-opus-4-8')}"
     if p == "gpt":
         return f"gpt:{_env('GPT_MODEL', '未配置')}"
-    return f"deepseek:{_env('DEEPSEEK_MODEL', 'deepseek-chat')}"
+    return p or "unknown"
 
 
-def chat_json(system: str, user: str) -> dict:
-    """调用当前 provider，要求严格 JSON 输出，带超时与重试。"""
-    provider = provider_name()
-    call = _PROVIDERS.get(provider)
-    if call is None:
-        raise LLMError(f"未知 LLM_PROVIDER: {provider!r}（应为 deepseek、gpt 或 claude）")
+def model_label() -> str:
+    return provider_label(provider_name())
+
+
+def chat_json(system: str, user: str, providers: list[str] | None = None) -> dict:
+    """按 provider 链调用，返回首个成功解析的严格 JSON（失败重试、逐个降级）。
+
+    - providers 默认取 LLM_PROVIDERS 容灾链；显式传入（如 --provider）则只走该名单。
+    - 链上没配 key 的 provider 直接跳过并提示，不当成错误。
+    - 重试是**轮转**的：每轮把链上每个可用 provider 各试一次，所以主用端挂了最多等
+      一个 LLM_TIMEOUT 就切到备用端，而短暂抖动还能靠后面的轮次救回来。
+    - 成功后把该 provider 写回 LLM_PROVIDER，让 model_label() 标注真正的产出方。
+    """
+    chain = [p.strip().lower() for p in (providers or provider_chain()) if p and p.strip()]
     timeout = int(_env("LLM_TIMEOUT", "300") or "300")
-    attempts = int(_env("LLM_MAX_ATTEMPTS", "3") or "3")
+    attempts = max(1, int(_env("LLM_MAX_ATTEMPTS", "3") or "3"))
+    notes: list[str] = []
+    usable: list[str] = []
+    for p in chain:
+        if p not in _PROVIDERS:
+            notes.append(f"{p}: 未知 provider")
+        elif not provider_configured(p):
+            notes.append(f"{p}: 未配置 API key")
+            print(f"⚠ provider {p} 未在 .env 里填 key，跳过。")
+        else:
+            usable.append(p)
+    if not usable:
+        raise LLMError("没有可用的 LLM provider（" + ("；".join(notes) or "链为空") + "）")
+
     last_err: Exception | None = None
     for i in range(1, attempts + 1):
-        try:
-            return _extract_json(call(system, user, timeout))
-        except (urllib.error.URLError, urllib.error.HTTPError, LLMError,
-                json.JSONDecodeError, KeyError, TimeoutError) as e:
-            last_err = e
-            if i < attempts:
-                time.sleep(min(2 ** i, 20))  # 指数退避
-    raise LLMError(f"LLM 调用失败（{attempts} 次）：{type(last_err).__name__}: {last_err}")
+        for provider in usable:
+            try:
+                data = _extract_json(_PROVIDERS[provider](system, user, timeout))
+            except (urllib.error.URLError, urllib.error.HTTPError, LLMError,
+                    json.JSONDecodeError, KeyError, TimeoutError) as e:
+                last_err = e
+                print(f"✗ {provider_label(provider)} 第 {i}/{attempts} 轮失败："
+                      f"{type(e).__name__}: {e}")
+                continue
+            os.environ["LLM_PROVIDER"] = provider
+            return data
+        if i < attempts:
+            time.sleep(min(2 ** i, 20))  # 指数退避
+    tail = f"；链上其它问题：{'；'.join(notes)}" if notes else ""
+    raise LLMError(f"所有 provider 均失败（{attempts} 轮）："
+                   f"{type(last_err).__name__}: {last_err}{tail}")

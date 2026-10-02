@@ -83,17 +83,39 @@ python3 scripts/fetch_guardian.py --out digests/_raw-guardian-2026-06-30.md
 
 与云端 Claude 本体模式并存的**第三种执行方式**：在你自己的电脑上，用脚本一条龙跑完
 「RSS / 公开列表页抓候选 → 抓公开正文喂 LLM → LLM 分类去重+中文摘要 → 写 `digests/YYYY-MM-DD.md`
-+ 更新 README → 可选 commit/push」。LLM 后端可在 **DeepSeek**（默认，官方或交大网关）
-和 **Claude**（Anthropic 官方 API）之间切换。也支持 OpenAI 兼容的 **GPT** 中转接口（如
-RightAPI）。**仅标准库**（`urllib` + `html.parser`）。
++ 更新 README → 可选 commit/push」。LLM 后端默认是 **DeepSeek**：主用**上海交大网关**，
+不可用时自动降级到 **DeepSeek 官方 API**；也支持 **Claude**（Anthropic 官方 API 或
+OpenAI 兼容中转）和 OpenAI 兼容的 **GPT** 中转接口（如 RightAPI）。
+**仅标准库**（`urllib` + `html.parser`）。
 
-**一次性配置**：把根目录 `.env.example` 复制为 `.env`，填 provider 与 key。GPT 中转站需
-配置 `GPT_API_BASE=https://www.rightapi.ai/codex/v1`、`GPT_API_KEY`、
-`GPT_MODEL=gpt-5.6-luna`：
+**一次性配置**：把根目录 `.env.example` 复制为 `.env`，填 provider 与 key。
 
 ```bash
-cp .env.example .env      # 然后编辑：LLM_PROVIDER / *_API_KEY / *_MODEL
+cp .env.example .env      # 然后编辑：LLM_PROVIDERS / *_API_KEY / *_MODEL
 ```
+
+日常（主用 + 备用）只需要动两个地方：
+
+```ini
+LLM_PROVIDERS=deepseek,deepseek-official      # 先试交大网关，挂了再试官方 API
+
+DEEPSEEK_API_BASE=https://models.sjtu.edu.cn/api/v1   # 主用：交大网关
+DEEPSEEK_API_KEY=<交大网关的 key>
+DEEPSEEK_MODEL=deepseek-chat
+
+DEEPSEEK_OFFICIAL_API_BASE=https://api.deepseek.com   # 备用：官方 API
+DEEPSEEK_OFFICIAL_API_KEY=<platform.deepseek.com 的 key>   # 不填则自动跳过这条腿
+DEEPSEEK_OFFICIAL_MODEL=deepseek-flash                # 官方 /models 当前只给 deepseek-flash
+```
+
+> 模型名要按端点的 `/models` 写：交大网关只有 `deepseek-chat` / `deepseek-reasoner`，
+> 没有 flash；而 DeepSeek 官方（[V4.1 Flash 公告](https://api-docs.deepseek.com/zh-cn/news/news260910/)）
+> 当前只提供 `deepseek-flash`（= V4.1 Flash）与 `deepseek-v4-pro`，旧名 `deepseek-chat`
+> 虽仍可用但已被路由到 `deepseek-flash`。写错名字网关/官方会直接 403。
+
+其它 provider（Claude / GPT）默认不在容灾链上，只在模型测评或手动 `--provider` 时用到；
+GPT 中转站需填 `GPT_API_BASE=https://www.rightapi.ai/codex/v1`、`GPT_API_KEY`、
+`GPT_MODEL=gpt-5.6-luna`。
 
 **用法**：
 
@@ -104,12 +126,15 @@ python3 scripts/generate_digest.py --commit        # 生成后自动 add/commit/
 python3 scripts/generate_digest.py --dry-run       # 只抓候选、不调 LLM、不落盘（省钱自检）
 python3 scripts/generate_digest.py --no-body       # 不抓正文，仅用标题（更快更省 token）
 python3 scripts/generate_digest.py --max-items 600 # 喂给 LLM 的候选上限（默认 600）
-python3 scripts/generate_digest.py --provider gpt  # 本次只用 GPT
+python3 scripts/generate_digest.py --provider deepseek  # 本次只用交大网关
+python3 scripts/generate_digest.py --provider deepseek-official  # 本次只用官方 API
 ```
 
-默认会在同一个 `_raw-YYYY-MM-DD.md` 候选清单上按 `claude → gpt → deepseek` 依次尝试，
-某个接口失败会自动切换下一个；也可用 `LLM_PROVIDERS=deepseek,gpt` 自定义顺序和范围。
-已有 `_raw-日期.md` 时会直接复用，不重复抓取正文，适合上次某个模型失败后重跑。
+默认走 `.env` 的 `LLM_PROVIDERS` 容灾链（`deepseek → deepseek-official`）：每轮把链上
+每个 provider 各试一次，所以主用端挂了最多等一个 `LLM_TIMEOUT` 就切备用端，短暂抖动还能
+靠后续轮次救回来；链上没填 key 的 provider 直接跳过（会打印提示），不算错误。也可用
+`--provider <名字>` 本次只走一个。已有 `_raw-日期.md` 时会直接复用，不重复抓取正文，
+适合上次某个模型失败后重跑。
 
 ### 版权红线（同 instruction.md §2）
 - 抓来的正文**只在内存里喂给 LLM 做理解**，产出仍是原创中文摘要(≤50字)+链接，
@@ -172,9 +197,13 @@ python3 scripts/generate_weekly.py --catch-up --commit   # 补已完结但缺的
   写进 `logs/digest-YYYY-MM-DD.log`（`logs/` 已 gitignore）。
 - `setup_task.ps1`：注册/删除计划任务，`-StartWhenAvailable` 让关机错过后开机补跑。
 - **交大网关**（`https://models.sjtu.edu.cn/api/v1`）只在校园网/内网可达，正因如此本模式
-  跑在本地而非云端。
+  跑在本地而非云端；离开校园网时靠 `LLM_PROVIDERS` 的第二条腿（DeepSeek 官方 API）兜底。
+- 周综述与日报共用同一条容灾链（都走 `llm_client.chat_json()`），也可 `--provider` 指定
+  单个后端，或 `--provider claude` 让某一周换 Claude 试试。
 
 ### llm_client.py
-provider 抽象层：`chat_json(system, user) -> dict`，内部封装 DeepSeek/GPT（OpenAI 兼容
-`/chat/completions`）与 Claude（`/v1/messages`）的差异，带超时/重试/JSON 抽取；另含极简
+provider 抽象层：`chat_json(system, user, providers=None) -> dict`，内部封装 DeepSeek
+（交大网关 / 官方，均为 OpenAI 兼容 `/chat/completions`）、GPT（同协议中转站）与 Claude
+（`/v1/messages`）的差异，带超时/重试/JSON 抽取。`providers` 缺省时取 `.env` 的
+`LLM_PROVIDERS` 容灾链，并按轮次轮转降级；没填 key 的 provider 自动跳过。另含极简
 `load_dotenv()`。

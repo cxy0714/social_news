@@ -23,7 +23,9 @@ Three distinct execution modes exist; know which one you are in:
 3. **Local API pipeline (自动无人值守).** `scripts/generate_digest.py` runs
    end-to-end on the user's Windows machine via a scheduled task: RSS candidates
    → fetch public article bodies (in-memory, LLM context only) → an LLM
-   (DeepSeek by default, or Codex — switched via `LLM_PROVIDER` in `.env`)
+   (DeepSeek by default — `LLM_PROVIDERS=deepseek,deepseek-official` in `.env` means
+   the SJTU gateway is primary and the official DeepSeek API is the fallback; other
+   backends switchable via `LLM_PROVIDER` / `--provider`)
    classifies/dedupes/summarizes → renders the `instruction.md` §3 template →
    writes `digests/YYYY-MM-DD.md`, updates the README index, optionally
    commits/pushes. This is the "定时任务用 API" mode. Copyright rules (§2) still

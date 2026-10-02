@@ -171,8 +171,9 @@ def main() -> int:
                     help="周内任一天 YYYY-MM-DD（默认今天北京时间）；据此定位所在 ISO 周")
     ap.add_argument("--commit", action="store_true", help="生成后 git add/commit/push（push 前先 pull --rebase）")
     ap.add_argument("--dry-run", action="store_true", help="只列当周日报文件，不调 LLM、不落盘")
-    ap.add_argument("--provider", choices=["deepseek", "claude"], default=None,
-                    help="覆盖 .env 的 LLM_PROVIDER（本次用哪个模型）")
+    ap.add_argument("--provider", choices=["deepseek", "deepseek-official", "claude", "gpt"],
+                    default=None,
+                    help="本次只用指定 provider，覆盖 LLM_PROVIDERS 容灾链")
     ap.add_argument("--out", default=None, help="覆盖输出路径（默认 digests/weekly-周日.md）")
     ap.add_argument("--catch-up", action="store_true",
                     help="补缺模式：过去 --lookback 天里已完结但缺 weekly 的周逐周补齐")
@@ -182,8 +183,7 @@ def main() -> int:
 
     llm_client.load_dotenv()
     if args.provider:
-        import os
-        os.environ["LLM_PROVIDER"] = args.provider
+        produce_weekly._providers = [args.provider]
 
     if args.catch_up:
         return run_catch_up(args)
@@ -218,10 +218,12 @@ def produce_weekly(monday: dt.date, sunday: dt.date, *, out: str | None = None,
     if not present:
         print(f"  ⚠ {iso_year}-W{iso_week:02d} 无任何日报，跳过。")
         return False
-    print(f"→ 调用 LLM（{llm_client.model_label()}）做 {iso_year}-W{iso_week:02d} 综述"
-          f"（{len(present)} 份日报）…")
+    providers = getattr(produce_weekly, "_providers", None) or llm_client.provider_chain()
+    print(f"→ 调用 LLM（容灾链 {' → '.join(llm_client.provider_label(p) for p in providers)}）"
+          f"做 {iso_year}-W{iso_week:02d} 综述（{len(present)} 份日报）…")
     try:
-        data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(present, monday, sunday))
+        data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(present, monday, sunday),
+                                    providers=providers)
     except llm_client.LLMError as e:
         print(f"✗ {e}")
         return False

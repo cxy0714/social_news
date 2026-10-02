@@ -6,6 +6,34 @@
 按日期分组，条目分为**新增 / 变更 / 修复 / 移除**四类。日常新闻 digest 的产出
 不逐条记录（每天都有），只记录管线、网页层与调研层本身的演进。所有日期为北京时间。
 
+## [2026-10-02]
+
+### 变更
+- LLM 后端收敛为**一条容灾链**，统一由 `llm_client.chat_json()` 执行：主用**上海交大
+  网关**的 DeepSeek（`DEEPSEEK_API_BASE=https://models.sjtu.edu.cn/api/v1`），不可用时
+  自动降级到 **DeepSeek 官方 API**（`.env` 的 `LLM_PROVIDERS=deepseek,deepseek-official`）。
+- 每周综述此前只能固定用单个 provider，现在与每日 digest 共用同一条链；两者都可用
+  `--provider` 临时只跑一个后端（新增 `deepseek-official` 取值）。
+- 重试改为**轮转**：每轮把链上每个可用 provider 各试一次，所以主用端挂了最多等一个
+  `LLM_TIMEOUT` 就切备用端，短暂抖动仍能靠后续轮次恢复。
+- digest / 周报里的模型标注带上实际端点（如 `deepseek@sjtu:deepseek-chat`），便于事后
+  核对那一期到底是谁生成的。
+
+### 新增
+- `.env` 新增备用端点三项 `DEEPSEEK_OFFICIAL_API_BASE / _API_KEY / _MODEL`；留占位符或
+  不填会被自动跳过并在日志里提示，不算错误。备用腿模型名用官方的 **`deepseek-flash`**
+  （V4.1 Flash，官方 `/models` 当前只列 `deepseek-flash` 与 `deepseek-v4-pro`；旧名
+  `deepseek-chat` 已被路由到 flash）。主用腿仍是网关上的 `deepseek-chat`——交大网关并没有
+  flash 型号（写 flash 会 403）。
+- 模型测评（`scripts/build_eval.py`）支持**两个方向**：`--fresh-provider {claude,deepseek,
+  deepseek-official}` 指定哪一栏现跑（复用方自动归到另一栏、标签按其 digest 头如实标注），
+  `--from-raw` 让现跑方复用 `digests/_raw-DATE.md`，两栏吃**同一份材料**、差异只来自模型。
+  首次产出 `evals/2026-10-02.md`：同一份 594 条候选，官方 `deepseek-flash` vs Claude。
+
+### 修复
+- 模型测评（`build_eval.py`）的 Claude 栏改为**显式指定** `providers=["claude"]`，否则会
+  被新的默认容灾链（交大网关 → 官方）覆盖，测的就不再是 Claude 了。
+
 ## [2026-07-10]
 
 ### 新增

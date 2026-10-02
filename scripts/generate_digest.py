@@ -262,14 +262,18 @@ SYSTEM_PROMPT = """\
 你是一名严谨的新闻编辑，为「学习宏观经济学与社会学的中文读者」编写每日新闻摘要。
 你会收到一批候选新闻（标题 / 来源 / 地区 / 可能的公开正文摘录）。任务：
 
-1. 按五大类分组：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类保留约
-   3-8 条高价值条目（社会类可多些），过滤体育娱乐花边。
+1. 按五大类分组：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类至少保留
+   8 条高价值条目（社会类可多些），过滤体育娱乐花边。候选里的「中国大陆」地区条目
+   必须在全部类目合计至少保留 4 条（候选不足 4 条时全部保留），不要因为其他地区新闻
+   热度更高就把中国大陆条目挤掉。
 2. 同一事件多源时**合并为一条**，主摘要选信息最全者，并在 reports 里列出所有报道该
    事件的媒体链接（不要只留一个而丢掉其他家）。
 3. 每条写：中文小标题（title）；≤50 字的原创中文摘要（summary，用自己的话，绝不复制
    原文段落）；region 地区标签（如 中东/欧洲/北美/中国大陆/亚太 等）。
-4. 概念观察：从当日真实条目里抽 3 个宏观经济学概念 + 3 个社会学概念，每个给中英文名、
-   一句定义、以及对应的当日新闻和挂靠理由。要从真实条目出发，不硬套。
+4. 概念观察：从当日真实条目里抽 3 个「机制设计 / 制度设计」问题 + 3 个社会学概念。
+   机制设计类每条要点出：这件事背后是什么制度安排/激励结构导致了当前结果（为何
+   这样设计、扭曲在哪），并明确回答该议题**是否有开放数据可查**（有则写明数据来源/
+   数据库名称，没有则直说「暂无公开数据」）。要从真实条目出发，不硬套。
 
 严格输出**一个 JSON 对象**，结构：
 {
@@ -279,8 +283,10 @@ SYSTEM_PROMPT = """\
        "reports": [{"source": "BBC", "url": "https://..."}]}
     ]}
   ],
-  "macro": [{"term_zh": "成本推动型通胀", "term_en": "Cost-push inflation",
-             "definition": "一句定义", "news": "对应的新闻小标题", "why": "挂靠理由"}],
+  "mechanism": [{"term_zh": "机制/制度设计问题名", "term_en": "English term",
+                 "definition": "一句说明背后的制度安排/激励结构",
+                 "news": "对应的新闻小标题", "why": "挂靠理由",
+                 "open_data": "有公开数据则写来源，没有则写「暂无公开数据」"}],
   "socio": [{"term_zh": "风险社会", "term_en": "Risk society",
              "definition": "一句定义", "news": "对应新闻", "why": "挂靠理由"}]
 }
@@ -342,12 +348,14 @@ def render_digest(data: dict, date_str: str, kept: int, hours: int,
 
 
 def _render_concepts(data: dict) -> str:
-    lines = ["---", "## 📚 概念观察 · 宏观经济学 & 社会学",
-             "> 给学习宏观经济学与社会学的读者：从今日新闻抽取核心概念 + 现实案例。", "",
-             "### 宏观经济学"]
-    for c in data.get("macro", []):
+    lines = ["---", "## 📚 概念观察 · 机制设计 & 社会学",
+             "> 给关心制度安排与社会学理论的读者：从今日新闻抽取机制/制度设计问题"
+             "（含是否有开放数据可查） + 社会学概念现实案例。", "",
+             "### 机制设计 / 制度设计"]
+    for c in data.get("mechanism", []):
         lines.append(f"- **{c.get('term_zh','')}（{c.get('term_en','')}）** — "
-                     f"{c.get('definition','')}📰 对应：*{c.get('news','')}*——{c.get('why','')}")
+                     f"{c.get('definition','')}📰 对应：*{c.get('news','')}*——{c.get('why','')}"
+                     f" 📊 开放数据：{c.get('open_data','暂无公开数据')}")
     lines.append("")
     lines.append("### 社会学")
     for c in data.get("socio", []):
@@ -428,7 +436,8 @@ def main() -> int:
     ap.add_argument("--no-body", action="store_true", help="不抓正文，仅用标题分类摘要")
     ap.add_argument("--refresh-raw", action="store_true",
                     help="忽略已有 _raw 候选缓存，重新抓取并覆盖它")
-    ap.add_argument("--provider", choices=["deepseek", "gpt", "claude"], default=None,
+    ap.add_argument("--provider", choices=["deepseek", "deepseek-official", "gpt", "claude"],
+                    default=None,
                     help="本次只使用指定 provider，覆盖 LLM_PROVIDERS fallback 链")
     ap.add_argument("--out", default=None, help="覆盖输出路径（默认 digests/YYYY-MM-DD.md）")
     ap.add_argument("--catch-up", action="store_true",
@@ -494,25 +503,14 @@ def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
     except ValueError:
         print(f"→ 已写候选清单 {raw}（{len(items)} 条，含正文），读回喂 LLM…")
     items = load_raw_candidates(raw)
-    providers = getattr(produce_digest, "_providers", None)
-    if not providers:
-        # 默认按容灾顺序全试一遍；LLM_PROVIDERS 可自定义顺序/子集。
-        providers = [p.strip().lower() for p in os.environ.get(
-            "LLM_PROVIDERS", "claude,gpt,deepseek"
-        ).split(",") if p.strip()]
-    data = None
-    last_error = None
-    for provider in providers:
-        os.environ["LLM_PROVIDER"] = provider
-        print(f"→ 调用 LLM（{llm_client.model_label()}）分类去重+摘要（{date_str}）…")
-        try:
-            data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(items, date_str))
-            break
-        except llm_client.LLMError as e:
-            last_error = e
-            print(f"✗ {provider} 失败，尝试下一个 provider：{e}")
-    if data is None:
-        print(f"✗ 所有 provider 均失败：{last_error}")
+    providers = getattr(produce_digest, "_providers", None) or llm_client.provider_chain()
+    print(f"→ 调用 LLM（容灾链 {' → '.join(llm_client.provider_label(p) for p in providers)}）"
+          f"分类去重+摘要（{date_str}）…")
+    try:
+        data = llm_client.chat_json(SYSTEM_PROMPT, build_user_payload(items, date_str),
+                                    providers=providers)
+    except llm_client.LLMError as e:
+        print(f"✗ {e}")
         return False
     md = render_digest(data, date_str, len(items), hours, unreachable)
     out_path = Path(out) if out else DIGESTS / f"{date_str}.md"
