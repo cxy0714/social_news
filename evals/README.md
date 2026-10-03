@@ -30,8 +30,12 @@ python3 scripts/build_eval.py --fresh-provider deepseek --from-raw   # 交大网
 ## 文件格式
 
 `evals/YYYY-MM-DD.md`：H1 标题 + front-matter 说明，正文两大段——
-`## 🟦 DeepSeek — <模型>` 和 `## 🟩 Claude — <模型>`，各自内部是降一级的五大类分区
+`## 🟦 <左栏> — <模型标签>` 和 `## 🟩 <右栏> — <模型标签>`，各自内部是降一级的五大类分区
 （`### 政治·国际` …）+ `### 📚 概念观察`。
+
+栏目名按实际端点取，常见的有 `DeepSeek`、`DeepSeek · 交大网关`、`DeepSeek · 官方`、
+`Claude`、`GPT`；左栏固定 🟦、右栏固定 🟩。**两栏可以同属 DeepSeek 家族**（网关 vs 官方），
+这时比的就是端点质量而非模型家族——正是为了检验「交大网关的 deepseek-chat 靠不靠得住」。
 
 ## 版权红线（同 instruction.md §2）
 

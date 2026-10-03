@@ -110,6 +110,23 @@ def fresh_side(provider: str, date_str: str, hours: int, max_items: int, body_ch
     return llm_client.model_label(), gd.render_body(data), len(items), unreachable
 
 
+def _side_name(label: str) -> str:
+    """把 provider 标签翻成栏目名：deepseek@sjtu:... → DeepSeek · 交大网关。
+
+    两栏可能同属 DeepSeek 家族（网关 vs 官方），标题必须说清是哪条腿。"""
+    if label.startswith("claude"):
+        return "Claude"
+    if label.startswith("gpt"):
+        return "GPT"
+    if "@sjtu" in label:
+        return "DeepSeek · 交大网关"
+    if "@official" in label:
+        return "DeepSeek · 官方"
+    if label.startswith("deepseek"):
+        return "DeepSeek"
+    return label or "模型"
+
+
 def render_eval(date_str: str, ds_label: str, ds_body: str, cl_label: str, cl_body: str,
                 note: str, ds_tail: str = "", cl_tail: str = "") -> str:
     """两栏并排的 evals 页。note 写进 front-matter（两栏各自怎么来的），
@@ -118,8 +135,8 @@ def render_eval(date_str: str, ds_label: str, ds_body: str, cl_label: str, cl_bo
            f"> 生成时间：{date_str}（北京时间）",
            "> 同一天的每日 digest，两个模型分别生成，并排对比分类、去重、摘要与「概念观察」质量。",
            f"> {note}", "",
-           f"## 🟦 DeepSeek — `{ds_label}`", "", demote_headings(ds_body) + ds_tail, "",
-           f"## 🟩 Claude — `{cl_label}`", "", demote_headings(cl_body) + cl_tail, "",
+           f"## 🟦 {_side_name(ds_label)} — `{ds_label}`", "", demote_headings(ds_body) + ds_tail, "",
+           f"## 🟩 {_side_name(cl_label)} — `{cl_label}`", "", demote_headings(cl_body) + cl_tail, "",
            "---",
            "_对比说明：两栏均为原创摘要并附原文链接，未复制原文。仅供观察不同模型在同一"
            "任务上的分类粒度、去重合并、摘要笔法与概念抽取差异，非排名。_"]
@@ -184,8 +201,10 @@ def main() -> int:
         ds_label, ds_body = fresh_label, fresh_body
         cl_label, cl_body = reused_label, reused_body
         ds_tail, cl_tail = tail, ""
-        note = (f"DeepSeek 方（{fresh_label}）按 generate_digest.py 同一流水线重跑（{where}）；"
-                f"Claude 方复用当天正式 digest。")
+        note = (f"左栏 {fresh_label} 按 generate_digest.py 同一流水线重跑（{where}）；"
+                f"右栏复用当天正式 digest（{reused_label}）。"
+                + ("两栏同为 DeepSeek，比的只是端点。" if reused_label.startswith("deepseek")
+                   else ""))
 
     md = render_eval(date_str, ds_label, ds_body, cl_label, cl_body, note, ds_tail, cl_tail)
     EVALS.mkdir(parents=True, exist_ok=True)
