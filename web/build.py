@@ -150,7 +150,7 @@ def collect_reports() -> list[Report]:
 
 
 class Eval:
-    """One model-comparison page under evals/ (DeepSeek vs Claude)."""
+    """One model-comparison page under evals/ (two models, or two endpoints of one)."""
 
     def __init__(self, path: Path):
         self.path = path
@@ -163,6 +163,19 @@ class Eval:
     @property
     def view_id(self) -> str:
         return self.slug
+
+    @property
+    def sides(self) -> str:
+        """卡片副标题：「谁 vs 谁」，从两栏 H2 标题现取，不写死。
+
+        对比对象按日期而定——可能是 DeepSeek 官方 vs 交大网关（同一模型的两个端点），
+        也可能是 DeepSeek vs Claude（两个模型家族）。"""
+        names: list[str] = []
+        for m in re.finditer(r"^##\s+(.+?)\s+—\s+`", self.md, re.MULTILINE):
+            name = re.sub(r"^[^\w\u4e00-\u9fff]+\s*", "", m.group(1)).strip()  # 去掉 🟦/🟩
+            if name:
+                names.append(name)
+        return " vs ".join(names[:2]) if names else "模型对比"
 
 
 def collect_evals() -> list["Eval"]:
@@ -573,9 +586,10 @@ def build_eval_landing(evals: list["Eval"]) -> str:
     """Landing page for the model-eval layer: intro + comparison cards."""
     p = ['<h1>模型测评 · Model Eval</h1>']
     p.append(
-        '<p class="lede">同一天的每日 digest，用不同模型（<strong>DeepSeek</strong> vs '
-        '<strong>Claude</strong>）各生成一版，<strong>并排对比</strong>分类粒度、去重合并、'
-        '摘要笔法与「概念观察」的抽取质量。仅供观察差异，非排名。</p>'
+        '<p class="lede">同一天的每日 digest，选两个模型或同一模型的两个端点各生成一版，'
+        '<strong>并排对比</strong>分类粒度、去重合并、摘要笔法与「概念观察」的抽取质量。'
+        '对比对象按日期而定（例如 DeepSeek 官方 vs 交大网关，或 DeepSeek vs Claude）。'
+        '仅供观察差异，非排名。</p>'
     )
     p.append('<h2>对比报告 Comparisons</h2>')
     if evals:
@@ -586,7 +600,7 @@ def build_eval_landing(evals: list["Eval"]) -> str:
                 f'<a class="ft-card" href="#{e.view_id}">'
                 f'<div class="card-date">{date}</div>'
                 f'<div class="card-title">{html.escape(e.title)}</div>'
-                f'<div class="ft-card-sum">DeepSeek vs Claude</div>'
+                f'<div class="ft-card-sum">{html.escape(e.sides)}</div>'
                 f'<div class="card-cta">查看对比 →</div></a>'
             )
         p.append('</div>')

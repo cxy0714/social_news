@@ -23,9 +23,10 @@ Three distinct execution modes exist; know which one you are in:
 3. **Local API pipeline (自动无人值守).** `scripts/generate_digest.py` runs
    end-to-end on the user's Windows machine via a scheduled task: RSS candidates
    → fetch public article bodies (in-memory, LLM context only) → an LLM
-   (DeepSeek by default — `LLM_PROVIDERS=deepseek,deepseek-official` in `.env` means
-   the SJTU gateway is primary and the official DeepSeek API is the fallback; other
-   backends switchable via `LLM_PROVIDER` / `--provider`)
+   (DeepSeek by default — `LLM_PROVIDERS=deepseek-official,deepseek` in `.env` means
+   the official DeepSeek API is primary and the SJTU gateway is the fallback; the
+   gateway was demoted after it fabricated source links on 2026-10-03. Other backends
+   switchable via `LLM_PROVIDER` / `--provider`)
    classifies/dedupes/summarizes → renders the `instruction.md` §3 template →
    writes `digests/YYYY-MM-DD.md`, updates the README index, optionally
    commits/pushes. This is the "定时任务用 API" mode. Copyright rules (§2) still
@@ -109,14 +110,17 @@ python3 scripts/fetch_news.py --out PATH   # custom output
 
 ## 模型测评层（evals/）
 
-又一个独立产出：同一天的每日 digest 用**不同模型**各生成一版并排对比（当前 DeepSeek
-vs Codex），观察分类粒度、去重合并、摘要笔法与「概念观察」的抽取差异。
+又一个独立产出：同一天的每日 digest 用**两个模型/两个端点**各生成一版并排对比（可能是
+DeepSeek 官方 vs 交大网关这种「同家族不同端点」，也可能是 DeepSeek vs Codex 这种跨家族），
+观察分类粒度、去重合并、摘要笔法与「概念观察」的抽取差异。
 
 - **产出**是入库 markdown `evals/YYYY-MM-DD.md`，格式见 `evals/README.md`：两大段
-  `## 🟦 DeepSeek` / `## 🟩 Codex`，各自内部是降一级的五大类分区 + 概念观察。
-- 生成脚本 `scripts/build_eval.py`：DeepSeek 方**复用**当天 `digests/YYYY-MM-DD.md`
-  正文（省一次调用），Codex 方按 `generate_digest.py` 同一流水线现抓候选重跑；两个
-  provider 的 key 都要在 `.env` 就绪。版权红线同 §2。
+  `## 🟦 <左栏>` / `## 🟩 <右栏>`（栏目名按实际端点取，见 `build_eval._side_name()`，
+  网页层也从这两行标题里现取卡片副标题），各自内部是降一级的五大类分区 + 概念观察。
+- 生成脚本 `scripts/build_eval.py`：一栏**复用**当天 `digests/YYYY-MM-DD.md` 正文（省一次
+  调用），另一栏按 `generate_digest.py` 同一流水线现跑——用 `--fresh-provider` 指定现跑方
+  （默认 Claude），`--from-raw` 让它复用当天 `_raw` 清单，两栏就吃同一份材料；两个 provider
+  的 key 都要在 `.env` 就绪。版权红线同 §2。
 - `web/build.py` 渲染 `#eval` 落地页与各对比视图（topnav「模型测评 Eval」tab）。
   云端定时任务不涉及这一层。
 

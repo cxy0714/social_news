@@ -23,6 +23,9 @@
 - 模型测评两栏标题按实际端点取名（`DeepSeek · 交大网关` / `DeepSeek · 官方`），支持
   **两栏同属 DeepSeek 家族**的端点对比；`build_eval.py --fresh-provider … --from-raw`
   已在 10-03 期首次使用。
+- 网页层测评页文案不再写死「DeepSeek vs Claude」：落地页说明改为「两个模型或同一模型的
+  两个端点」，**每张卡片的副标题改为从该期 markdown 的两栏 H2 标题里现取**（10-03 期显示
+  `DeepSeek · 官方 vs DeepSeek · 交大网关`，07-10 期仍如实显示 DeepSeek vs Claude）。
 
 ## [2026-10-02]
 
