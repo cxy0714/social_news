@@ -168,14 +168,19 @@ class Eval:
     def sides(self) -> str:
         """卡片副标题：「谁 vs 谁」，从两栏 H2 标题现取，不写死。
 
-        对比对象按日期而定——可能是 DeepSeek 官方 vs 交大网关（同一模型的两个端点），
-        也可能是 DeepSeek vs Claude（两个模型家族）。"""
+        对比对象按日期而定——可能是 DeepSeek 官方 vs 交大网关（同一模型的两个端点）、
+        DeepSeek vs Claude（两个模型家族），也可能是同一个端点只改 prompt/参数（此时两栏
+        名字相同，写「A vs A」读着别扭，改成点出对照轴）。"""
         names: list[str] = []
         for m in re.finditer(r"^##\s+(.+?)\s+—\s+`", self.md, re.MULTILINE):
             name = re.sub(r"^[^\w\u4e00-\u9fff]+\s*", "", m.group(1)).strip()  # 去掉 🟦/🟩
             if name:
                 names.append(name)
-        return " vs ".join(names[:2]) if names else "模型对比"
+        if not names:
+            return "模型对比"
+        if len(names) >= 2 and names[0] == names[1]:
+            return f"{names[0]}（同一端点 · 对照 prompt/参数）"
+        return " vs ".join(names[:2])
 
 
 def collect_evals() -> list["Eval"]:
