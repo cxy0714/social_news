@@ -66,6 +66,10 @@ PAYWALL_HOSTS = (
 
 CATEGORIES = ["政治 · 国际", "经济 · 财经", "科技", "社会 · 民生", "灾害 · 突发"]
 
+# SYSTEM_PROMPT 里给每类定的条数上限。超了只在日志里点名，不静默截断（截断会连带
+# 丢掉该条合并进来的多家报道链接，宁可由人决定删哪条）。
+CATEGORY_CAP = 8
+
 
 class _TextExtractor(HTMLParser):
     """极简正文提取：收集 <p> 里的可见文本，跳过 script/style。"""
@@ -262,10 +266,11 @@ SYSTEM_PROMPT = """\
 你是一名严谨的新闻编辑，为「学习宏观经济学与社会学的中文读者」编写每日新闻摘要。
 你会收到一批候选新闻（标题 / 来源 / 地区 / 可能的公开正文摘录）。任务：
 
-1. 按五大类分组：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类至少保留
-   8 条高价值条目（社会类可多些），过滤体育娱乐花边。候选里的「中国大陆」地区条目
-   必须在全部类目合计至少保留 4 条（候选不足 4 条时全部保留），不要因为其他地区新闻
-   热度更高就把中国大陆条目挤掉。
+1. 按五大类分组：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类**最多 8 条**
+   高价值条目（**社会类同样不超过 8 条**；建议 4–8 条），宁缺毋滥：同类里只留最重要的，
+   弱条目宁可不要，也绝不用次要新闻把篇幅凑满。过滤体育娱乐花边。候选里的「中国大陆」
+   地区条目必须在全部类目合计至少保留 4 条（候选不足 4 条时全部保留），不要因为其他地区
+   新闻热度更高就把中国大陆条目挤掉。
 2. 同一事件多源时**合并为一条**，主摘要选信息最全者，并在 reports 里列出所有报道该
    事件的媒体链接（不要只留一个而丢掉其他家）。
 3. 每条写：中文小标题（title）；≤50 字的原创中文摘要（summary，用自己的话，绝不复制
@@ -329,6 +334,15 @@ def render_body(data: dict) -> str:
         out.append("")
     out.append(_render_concepts(data))
     return "\n".join(out)
+
+
+def warn_over_cap(data: dict) -> None:
+    """prompt 要求每类最多 CATEGORY_CAP 条；模型超了就在日志里点出来。"""
+    over = [(c.get("name", "?"), len(c.get("items", [])))
+            for c in data.get("categories", []) if len(c.get("items", [])) > CATEGORY_CAP]
+    if over:
+        print("⚠ 以下类目超出每类 %d 条上限（prompt 未被完全遵守，本次仍按原样落盘）：%s"
+              % (CATEGORY_CAP, "、".join(f"{n} {k} 条" for n, k in over)))
 
 
 def render_digest(data: dict, date_str: str, kept: int, hours: int,
@@ -512,6 +526,7 @@ def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
     except llm_client.LLMError as e:
         print(f"✗ {e}")
         return False
+    warn_over_cap(data)
     md = render_digest(data, date_str, len(items), hours, unreachable)
     out_path = Path(out) if out else DIGESTS / f"{date_str}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)

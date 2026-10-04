@@ -58,7 +58,8 @@ Follow `instruction.md` §1 (每日工作流). In short:
 
 - Survey the sources listed in `instruction.md` §4 for the last ~24h.
 - Cover **five categories**: 政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发
-  (~3–8 high-value items each), dedupe across sources, tag each with a `region`.
+  (**capped at 8 items per category** — 4–8 recommended, no exemption for 社会·民生),
+  dedupe across sources, tag each with a `region`.
 - Write `digests/YYYY-MM-DD.md` using the template in `instruction.md` §3
   (sectioned **by category**, region as a per-item source tag).
 - Update the "最近 7 天" index at the top of `README.md`.
