@@ -172,6 +172,8 @@ def main() -> int:
                          "--from-raw 时忽略）")
     ap.add_argument("--body-chars", type=int, default=300,
                     help="现跑一栏每条正文摘录字数（默认 300；设 0 则只用标题；--from-raw 时忽略）")
+    ap.add_argument("--note-extra", default=None,
+                    help="往 front-matter 追加一行说明（例如本次两栏差在 prompt 的哪一处）")
     ap.add_argument("--commit", action="store_true", help="生成后 git add/commit/push")
     args = ap.parse_args()
 
@@ -202,9 +204,13 @@ def main() -> int:
         cl_label, cl_body = reused_label, reused_body
         ds_tail, cl_tail = tail, ""
         note = (f"左栏 {fresh_label} 按 generate_digest.py 同一流水线重跑（{where}）；"
-                f"右栏复用当天正式 digest（{reused_label}）。"
-                + ("两栏同为 DeepSeek，比的只是端点。" if reused_label.startswith("deepseek")
-                   else ""))
+                f"右栏复用当天正式 digest（{reused_label}）。")
+        if fresh_label == reused_label:
+            note += "两栏是**同一个端点**，差异来自 prompt 或运行参数，而非模型本身。"
+        elif reused_label.startswith("deepseek"):
+            note += "两栏同为 DeepSeek，比的只是端点。"
+    if args.note_extra:
+        note += "\n> " + args.note_extra.strip()
 
     md = render_eval(date_str, ds_label, ds_body, cl_label, cl_body, note, ds_tail, cl_tail)
     EVALS.mkdir(parents=True, exist_ok=True)

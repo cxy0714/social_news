@@ -15,6 +15,10 @@ python3 scripts/build_eval.py --commit        # 生成后 add/commit/push
 # 反过来：当天 digest 是 Claude 生成的，就用官方 DeepSeek 同材料现跑一版
 python3 scripts/build_eval.py --fresh-provider deepseek-official --from-raw
 python3 scripts/build_eval.py --fresh-provider deepseek --from-raw   # 交大网关
+
+# 同一端点、只差 prompt/参数的对照（例如改了每类条数上限），用 --note-extra 写清差在哪
+python3 scripts/build_eval.py --fresh-provider deepseek-official --from-raw \
+  --note-extra "差别来自 prompt：左栏用「每类最多 8 条」新上限现跑"
 ```
 
 - **复用方**：直接读已生成的 `digests/YYYY-MM-DD.md` 正文（不重跑，省一次调用），标签按
@@ -23,8 +27,12 @@ python3 scripts/build_eval.py --fresh-provider deepseek --from-raw   # 交大网
   后端生成正文。默认现抓 RSS（候选可能与另一栏略有出入，见 `--max-items` /`--body-chars`）；
   加 `--from-raw` 则复用 `digests/_raw-YYYY-MM-DD.md`，**两栏吃同一份材料**，差异只来自模型
   —— 想干净地比较模型时用这个（当天的 `_raw` 是本地私有中间产物，不入库）。
-- 两栏固定写在 `## 🟦 DeepSeek` / `## 🟩 Claude` 之下：现跑方是 deepseek 系时它占 DeepSeek
-  栏、复用的 digest 归 Claude 栏；现跑方是 claude 时反之。
+- 两栏分别写在 `## 🟦 <左栏>` / `## 🟩 <右栏>` 之下（左栏固定 🟦、右栏固定 🟩，栏目名按实际
+  端点取）：**现跑方占左栏**，复用的当天 digest 归右栏——现跑 `claude` 时右栏就是 DeepSeek
+  版，现跑 `deepseek-official` 时右栏就是 Claude 版或网关版，全按它自己的标签如实标注。
+- **两栏标签完全相同**时（例如同一个端点、只改了 prompt 或运行参数），自动说明会点出
+  「同一个端点，差异来自 prompt 或运行参数，而非模型本身」，再用 `--note-extra` 补一句
+  具体差在哪（如「左栏用『每类最多 8 条』新上限现跑」）。
 - 前置：`.env` 里对应 provider 的 key 要就绪（见 `.env.example`）。
 
 ## 文件格式
