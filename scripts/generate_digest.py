@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import math
 import os
 import re
@@ -69,6 +70,73 @@ CATEGORIES = ["政治 · 国际", "经济 · 财经", "科技", "社会 · 民�
 # SYSTEM_PROMPT 里给每类定的条数上限。超了只在日志里点名，不静默截断（截断会连带
 # 丢掉该条合并进来的多家报道链接，宁可由人决定删哪条）。
 CATEGORY_CAP = 8
+
+# 类目名别名表（归一化后比较）。模型经常把「政治 · 国际」写成「政治·国际」「政治国际」
+# 或干脆只写「政治」——只要渲染时按原文精确匹配，整类条目就会被静默丢掉。2026-10-13
+# 事故正是如此：557 条候选，模型给了五个类目，但四个类目名少了「·」两侧空格，
+# 结果 4/5 类目全成了「（本类今日无高价值条目）」，只有不带分隔符的「科技」活着。
+_CATEGORY_ALIASES = {
+    "政治国际": "政治 · 国际", "国际政治": "政治 · 国际",
+    "政治": "政治 · 国际", "国际": "政治 · 国际",
+    "经济财经": "经济 · 财经", "财经经济": "经济 · 财经",
+    "经济": "经济 · 财经", "财经": "经济 · 财经", "经济金融": "经济 · 财经",
+    "金融财经": "经济 · 财经", "金融": "经济 · 财经",
+    "科技": "科技", "科学技术": "科技", "科学": "科技", "技术": "科技",
+    "科技科学": "科技", "科技与科学": "科技",
+    "社会民生": "社会 · 民生", "民生社会": "社会 · 民生",
+    "社会": "社会 · 民生", "民生": "社会 · 民生",
+    "灾害突发": "灾害 · 突发", "突发灾害": "灾害 · 突发",
+    "灾害": "灾害 · 突发", "突发": "灾害 · 突发", "突发事件": "灾害 · 突发",
+}
+
+
+def canonical_category(name: str) -> str:
+    """类目名归一化：去掉空格、中点、括号、标点，只留中英文字符，便于宽松匹配。"""
+    return re.sub(r"[\s·•・‧∙．.、,，;；/|｜\\:：\-—_~～()（）\[\]【】{}<>《》\"'“”‘’+&]+",
+                  "", name or "")
+
+
+def map_categories(data: dict) -> tuple[dict[str, list[dict]], list[tuple[str, int]]]:
+    """把模型返回的 categories 归到 CATEGORIES 的五个原文名下。
+
+    返回 (by_name, unmatched)：by_name 以 CATEGORIES 原文名为键（缺失的类目为空列表）；
+    unmatched 是「类目名没认出来、条目会被丢弃」的类目 [(名字, 条数)]。调用方必须据此
+    报错，绝不能默默丢掉整类新闻——那正是 2026-10-13 那期只剩科技一类的原因。
+
+    匹配顺序：归一化精确 → 别名表 → 互相包含（「经济与财经」「政治·国际·安全」）
+    → difflib 近似（阈值 0.6）。"""
+    canonical_targets = {canonical_category(c): c for c in CATEGORIES}
+    by_name: dict[str, list[dict]] = {c: [] for c in CATEGORIES}
+    unmatched: list[tuple[str, int]] = []
+    for cat in data.get("categories") or []:
+        if not isinstance(cat, dict):
+            continue
+        items = [it for it in (cat.get("items") or []) if isinstance(it, dict)]
+        name = str(cat.get("name") or "")
+        key = canonical_category(name)
+        target = canonical_targets.get(key) or _CATEGORY_ALIASES.get(key)
+        if target is None and key:
+            for ck, cv in canonical_targets.items():
+                if ck in key or key in ck:
+                    target = cv
+                    break
+        if target is None and key:
+            near = difflib.get_close_matches(key, list(canonical_targets), n=1, cutoff=0.6)
+            if near:
+                target = canonical_targets[near[0]]
+        if target is None:
+            if items:
+                unmatched.append((name or "（无类目名）", len(items)))
+            continue
+        by_name[target].extend(items)
+    return by_name, unmatched
+
+
+def describe_categories(data: dict) -> str:
+    """模型返回的类目名+条数，写进日志——下次再出现类目名漂移能一眼看出来。"""
+    return "、".join(
+        f"{c.get('name', '?')}（{len(c.get('items') or [])} 条）"
+        for c in (data.get("categories") or []) if isinstance(c, dict)) or "（无）"
 
 
 class _TextExtractor(HTMLParser):
@@ -266,7 +334,7 @@ SYSTEM_PROMPT = """\
 你是一名严谨的新闻编辑，为「学习宏观经济学与社会学的中文读者」编写每日新闻摘要。
 你会收到一批候选新闻（标题 / 来源 / 地区 / 可能的公开正文摘录）。任务：
 
-1. 按五大类分组：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类**最多 8 条**
+1. 按五大类分组：政治 · 国际 / 经济 · 财经 / 科技 / 社会 · 民生 / 灾害 · 突发。每类**最多 8 条**
    高价值条目（**社会类同样不超过 8 条**；建议 4–8 条），宁缺毋滥：同类里只留最重要的，
    弱条目宁可不要，也绝不用次要新闻把篇幅凑满。过滤体育娱乐花边。候选里的「中国大陆」
    地区条目必须在全部类目合计至少保留 4 条（候选不足 4 条时全部保留），不要因为其他地区
@@ -295,7 +363,10 @@ SYSTEM_PROMPT = """\
   "socio": [{"term_zh": "风险社会", "term_en": "Risk society",
              "definition": "一句定义", "news": "对应新闻", "why": "挂靠理由"}]
 }
-name 必须用上述五个类目原文。reports 至少一条、URL 用候选里给的原始链接。只输出 JSON。"""
+name 必须逐字使用上述五个类目原文（政治 · 国际 / 经济 · 财经 / 科技 / 社会 · 民生 /
+灾害 · 突发，「·」两侧各一个半角空格），不得改写、缩写或省略；五个类目都要出现，
+某类确实没有值得收录的条目时给空 items 数组，不要漏掉该类目。reports 至少一条、
+URL 用候选里给的原始链接。只输出 JSON。"""
 
 
 def build_user_payload(items: list[dict], date_str: str) -> str:
@@ -318,9 +389,15 @@ def _fmt_reports(reports: list[dict]) -> str:
 def render_body(data: dict) -> str:
     """五大类分区 + 概念观察正文（不含 H1 标题 / front-matter / 尾注）。
 
-    eval 对比栏目复用它，把两个 provider 的正文并排堆叠。"""
+    eval 对比栏目复用它，把两个 provider 的正文并排堆叠。
+    类目名走 map_categories 宽松匹配；若有条目因类目名认不出来会被丢掉，直接抛错——
+    产出「某类今日无高价值条目」的假象比这一期跑失败更糟。"""
     out: list[str] = []
-    by_name = {c.get("name", ""): c.get("items", []) for c in data.get("categories", [])}
+    by_name, unmatched = map_categories(data)
+    if unmatched:
+        raise ValueError(
+            "模型返回的类目名无法识别，以下条目不落盘会被静默丢掉："
+            + "、".join(f"「{n}」{k} 条" for n, k in unmatched))
     for cat in CATEGORIES:
         out.append(f"## {cat}")
         rows = by_name.get(cat, [])
@@ -334,6 +411,14 @@ def render_body(data: dict) -> str:
         out.append("")
     out.append(_render_concepts(data))
     return "\n".join(out)
+
+
+def warn_sparse(data: dict, candidates: int, threshold: int = 100, floor: int = 5) -> None:
+    """候选很多、产出却极少时点名（不拦）——可能是模型偷懒，也可能是当日新闻确无价值。"""
+    by_name, _ = map_categories(data)
+    total = sum(len(v) for v in by_name.values())
+    if candidates >= threshold and total < floor:
+        print(f"⚠ 候选 {candidates} 条但只产出 {total} 条摘要，请人工看一眼是否异常。")
 
 
 def warn_over_cap(data: dict) -> None:
@@ -512,11 +597,11 @@ def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
             for it in items:
                 it["body"] = fetch_body(it["link"])
         raw = write_raw_candidates(items, date_str, window_desc or f"过去 {hours}h")
-    try:
-        print(f"→ 已写候选清单 {raw.relative_to(ROOT)}（{len(items)} 条，含正文），读回喂 LLM…")
-    except ValueError:
-        print(f"→ 已写候选清单 {raw}（{len(items)} 条，含正文），读回喂 LLM…")
     items = load_raw_candidates(raw)
+    try:
+        print(f"→ 候选清单 {raw.relative_to(ROOT)}：{len(items)} 条读回喂 LLM…")
+    except ValueError:
+        print(f"→ 候选清单 {raw}：{len(items)} 条读回喂 LLM…")
     providers = getattr(produce_digest, "_providers", None) or llm_client.provider_chain()
     print(f"→ 调用 LLM（容灾链 {' → '.join(llm_client.provider_label(p) for p in providers)}）"
           f"分类去重+摘要（{date_str}）…")
@@ -527,7 +612,15 @@ def produce_digest(items: list[dict], unreachable: list[str], date_str: str, *,
         print(f"✗ {e}")
         return False
     warn_over_cap(data)
-    md = render_digest(data, date_str, len(items), hours, unreachable)
+    print(f"  · 模型返回类目：{describe_categories(data)}")
+    warn_sparse(data, len(items))
+    try:
+        md = render_digest(data, date_str, len(items), hours, unreachable)
+    except ValueError as e:
+        # 类目名认不出来会导致整类条目被丢掉：宁可这一期失败（退出码非 0、日志有 ✗、
+        # 计划任务下次开机/次日补跑），也不要落一份四类皆空的 digest 假装成功。
+        print(f"✗ {e}")
+        return False
     out_path = Path(out) if out else DIGESTS / f"{date_str}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md, encoding="utf-8")

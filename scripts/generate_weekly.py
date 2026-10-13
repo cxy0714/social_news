@@ -77,7 +77,7 @@ SYSTEM_PROMPT = """\
 1. 主线：挑出贯穿本周的 4-8 条核心主线（一句话看懂），每条给一个中文小标题
    （headline）+ 一段 40-80 字的中文综述（summary，串起本周进展、更新到最新数字），
    并从日报里选 1-3 个最相关的原文链接放进 reports。
-2. 五类分区：政治·国际 / 经济·财经 / 科技 / 社会·民生 / 灾害·突发。每类保留本周
+2. 五类分区：政治 · 国际 / 经济 · 财经 / 科技 / 社会 · 民生 / 灾害 · 突发。每类保留本周
    最有价值的 4-8 条，合并同一事件的跨日报道，写中文小标题 + ≤60 字原创综述 +
    region 地区标签 + reports（原文链接，沿用日报里给的 URL）。
 3. 全部为原创综述，用自己的话，绝不复制第三方原文段落。链接必须来自输入日报里出现过
@@ -96,7 +96,9 @@ SYSTEM_PROMPT = """\
     ]}
   ]
 }
-name 必须用五个类目原文（政治 · 国际 / 经济 · 财经 / 科技 / 社会 · 民生 / 灾害 · 突发）。
+name 必须逐字使用五个类目原文（政治 · 国际 / 经济 · 财经 / 科技 / 社会 · 民生 /
+灾害 · 突发，「·」两侧各一个半角空格），五个类目都要出现；某类本周确实没有值得收录
+的条目时给空 items 数组，不要漏掉该类目。
 reports 至少一条。只输出 JSON。"""
 
 
@@ -124,7 +126,10 @@ def render_weekly(data: dict, monday: dt.date, sunday: dt.date,
         out.append(f"   {gd._fmt_reports(m.get('reports', []))}")
     out.append("")
     nums = ["二", "三", "四", "五", "六"]
-    by_name = {c.get("name", ""): c.get("items", []) for c in data.get("categories", [])}
+    by_name, unmatched = gd.map_categories(data)   # 类目名宽松匹配，见 generate_digest
+    if unmatched:
+        raise ValueError("模型返回的类目名无法识别，以下条目不落盘会被静默丢掉："
+                         + "、".join(f"「{n}」{k} 条" for n, k in unmatched))
     for idx, cat in enumerate(CATEGORIES):
         out.append(f"## {nums[idx]}、{cat}")
         rows = by_name.get(cat, [])
@@ -227,7 +232,12 @@ def produce_weekly(monday: dt.date, sunday: dt.date, *, out: str | None = None,
     except llm_client.LLMError as e:
         print(f"✗ {e}")
         return False
-    md = render_weekly(data, monday, sunday, present, missing)
+    print(f"  · 模型返回类目：{gd.describe_categories(data)}")
+    try:
+        md = render_weekly(data, monday, sunday, present, missing)
+    except ValueError as e:
+        print(f"✗ {e}")
+        return False
     out_path = Path(out) if out else DIGESTS / f"weekly-{sunday:%Y-%m-%d}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md, encoding="utf-8")
